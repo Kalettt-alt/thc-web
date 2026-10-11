@@ -48,9 +48,10 @@ export default function Navbar({ session }) {
   const user = session?.user?.user_metadata;
   const discordIdentity = session?.user?.identities?.find(identity => identity.provider === 'discord')?.identity_data;
   const discordNombreRaw = [
+    user?.full_name, discordIdentity?.full_name,
     user?.preferred_username, user?.user_name, user?.username,
     discordIdentity?.preferred_username, discordIdentity?.user_name, discordIdentity?.username,
-    user?.full_name, user?.name, discordIdentity?.full_name, discordIdentity?.name,
+    user?.name, discordIdentity?.name,
   ].find(value => typeof value === 'string' && value.trim())?.trim() || '';
   const discordAvatarRaw = user?.avatar_url || "/imagenes/LogoTHC.png";
 
@@ -143,7 +144,7 @@ export default function Navbar({ session }) {
           <AnimatePresence>
             {activeMenu === 'profile' && <motion.div initial={{ opacity: 0, y: -10, scale: .95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -10, scale: .95 }} className="thc-navbar-popup thc-navbar-popup-profile">
               <span className="thc-navbar-profile-heading">{nombreMostrar}<small style={{ color: rangoActual.color }}>{rangoActual.nombre}</small></span>
-              <button type="button" onClick={() => { closeMenu(); const nombre = perfil?.discord_nombre || discordNombreRaw; navigate(nombre ? RUTAS.PERFIL + '/' + encodeURIComponent(nombre) : RUTAS.PERFIL); }}><User size={16} />Ver perfil<ArrowUpRight size={14} /></button>
+              <button type="button" onClick={() => { closeMenu(); navigate(RUTAS.PERFIL); }}><User size={16} />Ver perfil<ArrowUpRight size={14} /></button>
               <button type="button" onClick={cerrarSesion} className="thc-navbar-logout"><LogOut size={16} />Cerrar sesión</button>
             </motion.div>}
           </AnimatePresence>

@@ -1,0 +1,59 @@
+-- Ejecutar este archivo completo en el SQL Editor de Supabase.
+-- Conserva IDs, apodos, roles, inventarios y las politicas RLS existentes.
+BEGIN;
+
+CREATE OR REPLACE FUNCTION public.thc_normalizar_nombre_discord()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+DECLARE
+  nombre_discord text;
+BEGIN
+  SELECT coalesce(
+    nullif(btrim(u.raw_user_meta_data ->> 'full_name'), ''),
+    nullif(btrim(u.raw_user_meta_data ->> 'preferred_username'), ''),
+    nullif(btrim(u.raw_user_meta_data ->> 'user_name'), ''),
+    nullif(btrim(u.raw_user_meta_data ->> 'username'), ''),
+    nullif(btrim(u.raw_user_meta_data ->> 'name'), '')
+  ) INTO nombre_discord
+  FROM auth.users AS u
+  WHERE u.id = NEW.id;
+
+  IF nombre_discord IS NOT NULL THEN
+    NEW.discord_nombre := nombre_discord;
+  ELSIF TG_OP = 'UPDATE' THEN
+    -- Una sesion incompleta nunca reemplaza un nombre existente.
+    IF NEW.discord_nombre IS NULL
+       OR btrim(NEW.discord_nombre) IN ('', 'Jugador') THEN
+      NEW.discord_nombre := OLD.discord_nombre;
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.thc_normalizar_nombre_discord()
+FROM PUBLIC, anon, authenticated;
+
+DROP TRIGGER IF EXISTS zzz_thc_normalizar_nombre_discord ON public.perfiles;
+CREATE TRIGGER zzz_thc_normalizar_nombre_discord
+BEFORE INSERT OR UPDATE OF discord_nombre ON public.perfiles
+FOR EACH ROW EXECUTE FUNCTION public.thc_normalizar_nombre_discord();
+
+-- Repara los perfiles existentes que todavia tienen el respaldo antiguo.
+UPDATE public.perfiles AS p
+SET discord_nombre = btrim(u.raw_user_meta_data ->> 'full_name')
+FROM auth.users AS u
+WHERE p.id = u.id
+  AND p.discord_nombre = 'Jugador'
+  AND nullif(btrim(u.raw_user_meta_data ->> 'full_name'), '') IS NOT NULL;
+
+COMMIT;
+
+-- El resultado muestra cualquier perfil pendiente de revisar.
+SELECT id, discord_nombre
+FROM public.perfiles
+WHERE discord_nombre = 'Jugador';
