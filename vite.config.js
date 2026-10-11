@@ -10,7 +10,6 @@ export default defineConfig(({ mode }) => ({
     tierListVitePlugin(loadEnv(mode, process.cwd(), 'VITE_')),
   ],
   build: {
-    sourcemap: false,
-    minify: 'esbuild',
+    sourcemap: false
   }
 }))
