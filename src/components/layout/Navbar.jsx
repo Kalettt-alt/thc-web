@@ -46,7 +46,12 @@ export default function Navbar({ session }) {
   const { motionEnabled, toggleMotion } = useHomeMotion();
 
   const user = session?.user?.user_metadata;
-  const discordNombreRaw = user?.preferred_username || user?.user_name || "Jugador";
+  const discordIdentity = session?.user?.identities?.find(identity => identity.provider === 'discord')?.identity_data;
+  const discordNombreRaw = [
+    user?.preferred_username, user?.user_name, user?.username,
+    discordIdentity?.preferred_username, discordIdentity?.user_name, discordIdentity?.username,
+    user?.full_name, user?.name, discordIdentity?.full_name, discordIdentity?.name,
+  ].find(value => typeof value === 'string' && value.trim())?.trim() || '';
   const discordAvatarRaw = user?.avatar_url || "/imagenes/LogoTHC.png";
 
   const userId = session?.user?.id;
@@ -60,6 +65,7 @@ export default function Navbar({ session }) {
         if (resultado.error) throw resultado.error;
         let perfilData = resultado.data;
         if (!perfilData) {
+          if (!discordNombreRaw) throw new Error('La sesión no contiene un nombre de Discord.');
           const nuevoPerfil = { id: userId, discord_nombre: discordNombreRaw, avatar_url: discordAvatarRaw };
           const creado = await supabase.from('perfiles').insert(nuevoPerfil).select(campos).single();
           if (creado.error?.code === '23505') {
@@ -71,7 +77,7 @@ export default function Navbar({ session }) {
             perfilData = creado.data;
           }
         }
-        if (perfilData.discord_nombre !== discordNombreRaw) {
+        if (discordNombreRaw && perfilData.discord_nombre !== discordNombreRaw) {
           const actualizado = await supabase.from('perfiles').update({ discord_nombre: discordNombreRaw }).eq('id', userId).select(campos).single();
           if (actualizado.error) throw actualizado.error;
           perfilData = actualizado.data;
@@ -114,7 +120,7 @@ export default function Navbar({ session }) {
     }
   };
   
-  const nombreMostrar = perfil?.apodo || perfil?.discord_nombre || discordNombreRaw;
+  const nombreMostrar = perfil?.apodo || perfil?.discord_nombre || discordNombreRaw || 'Jugador';
   const avatarMostrar = perfil?.avatar_url || discordAvatarRaw;
   const rangoActual = obtenerRango(perfil?.nivel_rol);
 
@@ -137,7 +143,7 @@ export default function Navbar({ session }) {
           <AnimatePresence>
             {activeMenu === 'profile' && <motion.div initial={{ opacity: 0, y: -10, scale: .95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -10, scale: .95 }} className="thc-navbar-popup thc-navbar-popup-profile">
               <span className="thc-navbar-profile-heading">{nombreMostrar}<small style={{ color: rangoActual.color }}>{rangoActual.nombre}</small></span>
-              <button type="button" onClick={() => { closeMenu(); navigate(RUTAS.PERFIL + '/' + encodeURIComponent(perfil?.discord_nombre || discordNombreRaw)); }}><User size={16} />Ver perfil<ArrowUpRight size={14} /></button>
+              <button type="button" onClick={() => { closeMenu(); const nombre = perfil?.discord_nombre || discordNombreRaw; navigate(nombre ? RUTAS.PERFIL + '/' + encodeURIComponent(nombre) : RUTAS.PERFIL); }}><User size={16} />Ver perfil<ArrowUpRight size={14} /></button>
               <button type="button" onClick={cerrarSesion} className="thc-navbar-logout"><LogOut size={16} />Cerrar sesión</button>
             </motion.div>}
           </AnimatePresence>
