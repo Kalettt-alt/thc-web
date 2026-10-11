@@ -1,0 +1,117 @@
+.tinder-thc-page {
+  --tinder-orange: #ff7a18;
+  min-height: 100dvh;
+  overflow: hidden;
+  padding: 130px max(24px, calc((100vw - 1200px) / 2)) 72px;
+  color: #f9f6ef;
+  background: radial-gradient(ellipse at 78% 52%, #ff7a1812, transparent 52%), #080808;
+}
+
+.tinder-thc-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  font-size: 16px;
+  font-weight: 650;
+  color: #c8c5bd;
+  transition: color 180ms;
+}
+
+.tinder-thc-back:hover { color: var(--tinder-orange); }
+.tinder-thc-page a:focus-visible { outline: 2px solid var(--tinder-orange); outline-offset: 6px; }
+
+.tinder-thc-stage {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  align-items: center;
+  gap: 40px;
+  margin-top: 44px;
+}
+
+.tinder-thc-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #ff7a183d;
+  border-radius: 999px;
+  padding: 9px 15px;
+  color: var(--tinder-orange);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.tinder-thc-copy h1 {
+  margin: 28px 0 18px;
+  font-size: clamp(58px, 7.2vw, 100px);
+  font-weight: 950;
+  line-height: .95;
+  letter-spacing: -.06em;
+}
+.tinder-thc-copy h1 span { color: var(--tinder-orange); }
+.tinder-thc-copy h2 { font-size: clamp(25px, 3vw, 34px); font-weight: 750; letter-spacing: -.03em; }
+.tinder-thc-copy p { max-width: 520px; margin: 20px 0 30px; font-size: 19px; line-height: 1.65; color: #b6b3ac; }
+
+.tinder-thc-return {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 22px;
+  padding: 18px 22px;
+  border-radius: 12px;
+  background: var(--tinder-orange);
+  color: #100b06;
+  font-size: 17px;
+  font-weight: 800;
+  transition: background 180ms, transform 180ms;
+}
+.tinder-thc-return:hover { background: #ff963d; transform: translateY(-3px); }
+
+.tinder-thc-art { position: relative; min-width: 0; height: 475px; }
+.tinder-thc-orbit { position: absolute; inset: 25px 0 50px; border: 1px solid #ff7a1824; border-radius: 50%; transform: rotate(-25deg); }
+.tinder-thc-profile { position: absolute; width: 235px; height: 315px; padding: 20px; border: 1px solid #ffffff1c; border-radius: 20px; background: #151513; }
+.tinder-thc-profile span { display: block; font-size: 13px; font-weight: 800; letter-spacing: .08em; }
+.tinder-thc-profile svg { width: 100%; height: 220px; color: #34342e; }
+.tinder-thc-profile-line { width: 70%; height: 8px; border-radius: 6px; background: #ffffff20; margin-top: 10px; }
+.tinder-thc-profile-line-short { width: 42%; height: 6px; }
+.tinder-thc-profile-back { top: 10px; left: 4%; transform: rotate(-12deg); }
+.tinder-thc-profile-front { top: 92px; right: 0; transform: rotate(9deg); background: #f1efe4; color: #171713; border-color: #f1efe4; }
+.tinder-thc-profile-front svg { color: #d1d0bf; }
+.tinder-thc-profile-front .tinder-thc-profile-line { background: #17171322; }
+.tinder-thc-heart { position: absolute; display: grid; place-items: center; width: 80px; height: 80px; top: 258px; left: 16%; border: 7px solid #080808; border-radius: 50%; color: #100b06; background: var(--tinder-orange); animation: tinder-thc-float 4s ease-in-out infinite; }
+.tinder-thc-art-caption { position: absolute; bottom: 7px; right: 15px; color: #a8a69d; font-size: 14px; font-weight: 750; letter-spacing: .1em; }
+
+@keyframes tinder-thc-float { 0%, 100% { transform: translateY(0) rotate(-9deg); } 50% { transform: translateY(-10px) rotate(6deg); } }
+
+@media (max-width: 900px) {
+  .tinder-thc-stage { gap: 22px; }
+  .tinder-thc-profile { width: 210px; height: 295px; }
+  .tinder-thc-profile svg { height: 200px; }
+  .tinder-thc-copy h1 { font-size: clamp(56px, 8vw, 78px); }
+}
+
+@media (max-width: 680px) {
+  .tinder-thc-page { padding: 105px 22px 40px; }
+  .tinder-thc-stage { grid-template-columns: 1fr; margin-top: 26px; gap: 35px; }
+  .tinder-thc-copy p { font-size: 18px; }
+  .tinder-thc-copy h1 { font-size: clamp(58px, 14.2vw, 90px); }
+  .tinder-thc-art { width: 100%; max-width: 430px; height: 430px; margin-inline: auto; }
+  .tinder-thc-profile-back { left: 4%; }
+  .tinder-thc-profile-front { right: 3%; top: 65px; }
+  .tinder-thc-art-caption { bottom: 10px; font-size: 12px; }
+}
+
+@media (max-width: 360px) {
+  .tinder-thc-page { padding-inline: 18px; }
+  .tinder-thc-return { font-size: 15px; gap: 12px; padding: 17px; }
+  .tinder-thc-profile { width: 180px; height: 267px; padding: 17px; }
+  .tinder-thc-profile svg { height: 179px; }
+  .tinder-thc-heart { left: 2%; top: 251px; }
+  .tinder-thc-art { height: 380px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tinder-thc-heart { animation: none; }
+  .tinder-thc-back, .tinder-thc-return { transition: none; }
+  .tinder-thc-return:hover { transform: none; }
+}

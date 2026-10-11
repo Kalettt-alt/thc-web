@@ -1,0 +1,2 @@
+[functions.compartir-tierlist]
+verify_jwt = true

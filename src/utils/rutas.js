@@ -1,0 +1,17 @@
+export const RUTAS = {
+    INICIO: "/",
+    ALBUM: "/album",
+    FORO: "/foro",
+    TIER: "/tier",
+    PERFIL: "/perfil",
+    MENSAJES: "/mensajes",
+    NOTICIAS: "/noticias",
+    RANKINGS: "/rankings",
+    ESTADISTICAS: "/estadisticas",
+    ADMIN: "/admin",
+    ULTIMATE_TEAM: "/ultimate-team",
+    MURO: "/muro",
+    REGLAMENTO: "/reglamento",
+    FANTASY: '/dt',
+    TINDER: '/tinder',
+};
