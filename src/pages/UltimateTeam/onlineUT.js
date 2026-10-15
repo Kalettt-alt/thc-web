@@ -1,5 +1,5 @@
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
-export const ONLINE_POLL_MS = 5000;
+export const ONLINE_POLL_MS = 2000;
 export const ONLINE_GRL_RANGE = 3;
 
 export function onlineUtError(error) {
@@ -38,4 +38,13 @@ export function cancelOnlineQueue(client, requestId = null) {
 export function joinOnlineQueue(client, requestId = crypto.randomUUID()) {
   if (!UUID_PATTERN.test(requestId)) return Promise.reject(new Error('La búsqueda no tiene un identificador válido.'));
   return request(client, 'thc_ut_online_buscar', { p_request_id: requestId });
+}
+
+export function updateOnlineTactics(client, { matchId, revision, requestId = crypto.randomUUID(), titulares, formacion, mentalidad = 'neutral' }) {
+  if (!UUID_PATTERN.test(matchId) || !UUID_PATTERN.test(requestId) || !Number.isInteger(revision) || revision < 0 ||
+    !Array.isArray(titulares) || titulares.length !== 11 || titulares.some(id => typeof id !== 'string') || new Set(titulares).size !== 11 ||
+    !['4-3-3', '4-4-2', '4-2-3-1'].includes(formacion) || !['defensiva', 'neutral', 'ofensiva'].includes(mentalidad)) {
+    return Promise.reject(new Error('La alineación no es válida.'));
+  }
+  return request(client, 'thc_ut_online_tactica', { p_match_id: matchId, p_revision: revision, p_request_id: requestId, p_titulares: titulares, p_formacion: formacion, p_mentalidad: mentalidad });
 }

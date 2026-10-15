@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, Save, X } from 'lucide-react';
-import { useReducedMotion } from 'framer-motion';
-import { PROFILE_THEMES, getProfileThemeStyle } from '../../utils/profileThemes';
+import { Check, LockKeyhole, Save, X } from 'lucide-react';
+import { PROFILE_THEMES, canUseProfileTheme, getAvailableThemes, getProfileThemeStyle } from '../../utils/profileThemes';
 import { safeHexColor, safeProfileTheme } from '../../utils/media';
-import { useHomeMotion } from '../../utils/homeMotion';
 import './PerfilThemes.css';
 
-export default function PerfilThemePicker({ themeId, color, onPreview, onSave, onCancel, disabled = false }) {
-  const [draftId, setDraftId] = useState(() => safeProfileTheme(themeId));
+export default function PerfilThemePicker({ themeId, color, level = 0, onPreview, onSave, onCancel, disabled = false, effectsMode = 'calm' }) {
+  const [selectedDraftId, setDraftId] = useState(() => canUseProfileTheme(safeProfileTheme(themeId), level) ? safeProfileTheme(themeId) : 'default');
+  const draftId = canUseProfileTheme(selectedDraftId, level) ? selectedDraftId : 'default';
   const [draftColor, setDraftColor] = useState(() => safeHexColor(color));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -15,10 +14,10 @@ export default function PerfilThemePicker({ themeId, color, onPreview, onSave, o
   const active = useRef(true);
   const savingLock = useRef(false);
   const onCancelRef = useRef(onCancel);
-  const { motionEnabled } = useHomeMotion();
-  const reducedMotion = useReducedMotion();
   const isDirty = draftId !== safeProfileTheme(themeId) || draftColor.toLowerCase() !== safeHexColor(color).toLowerCase();
   const selectedTheme = PROFILE_THEMES.find(theme => theme.id === draftId);
+  const availableThemes = getAvailableThemes(level);
+  const canSave = canUseProfileTheme(draftId, level) && Number(level) >= 10;
 
   useEffect(() => { onCancelRef.current = onCancel; }, [onCancel]);
   useEffect(() => {
@@ -35,6 +34,7 @@ export default function PerfilThemePicker({ themeId, color, onPreview, onSave, o
   }, []);
 
   function preview(id, nextColor = draftColor) {
+    if (!canUseProfileTheme(id, level)) return;
     setDraftId(id);
     setDraftColor(nextColor);
     setError('');
@@ -42,7 +42,7 @@ export default function PerfilThemePicker({ themeId, color, onPreview, onSave, o
   }
 
   async function save() {
-    if (disabled || savingLock.current || !isDirty) return;
+    if (disabled || savingLock.current || !isDirty || !canSave) return;
     savingLock.current = true;
     setSaving(true);
     setError('');
@@ -60,7 +60,7 @@ export default function PerfilThemePicker({ themeId, color, onPreview, onSave, o
       if (!savingLock.current && !disabled) onCancelRef.current?.();
     }
     if (event.key !== 'Tab') return;
-    const focusable = [...panel.current.querySelectorAll('button:not(:disabled), input:not(:disabled), [tabindex="0"]')];
+    const focusable = [...panel.current.querySelectorAll('button:not(:disabled), input:not(:disabled), [tabindex="0"]:not(:disabled)')];
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
@@ -70,23 +70,29 @@ export default function PerfilThemePicker({ themeId, color, onPreview, onSave, o
   function moveSelection(event) {
     if (saving || disabled || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
-    const index = PROFILE_THEMES.findIndex(theme => theme.id === draftId);
-    const next = event.key === 'Home' ? 0 : event.key === 'End' ? PROFILE_THEMES.length - 1 : (index + (['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 1) + PROFILE_THEMES.length) % PROFILE_THEMES.length;
-    preview(PROFILE_THEMES[next].id);
-    event.currentTarget.querySelectorAll('[role="radio"]')[next]?.focus();
+    const index = availableThemes.findIndex(theme => theme.id === draftId);
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? availableThemes.length - 1 : (index + (['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 1) + availableThemes.length) % availableThemes.length;
+    if (!availableThemes[next]) return;
+    const nextId = availableThemes[next].id;
+    preview(nextId);
+    event.currentTarget.querySelector(`[data-theme-option="${nextId}"]`)?.focus();
   }
 
   return (
-    <div className="profile-picker-backdrop" onKeyDown={handleKeys} data-motion={motionEnabled && !reducedMotion ? 'on' : 'off'}>
+    <div className="profile-picker-backdrop" onKeyDown={handleKeys} data-effects={effectsMode}>
       <section ref={panel} className="profile-picker" role="dialog" aria-modal="true" aria-labelledby="profile-picker-title">
         <header className="profile-picker-heading">
-          <div><span>COLECCIÓN VIP · 10 ESTILOS</span><h2 id="profile-picker-title">Un perfil muy tuyo.</h2></div>
+          <div><span>PERSONALIZA TU PERFIL</span><h2 id="profile-picker-title">Elige tu estilo.</h2></div>
           <button type="button" className="profile-picker-close" aria-label="Cerrar estilos y descartar vista previa" onClick={onCancel} disabled={saving || disabled}><X size={22} /></button>
         </header>
         <p className="profile-picker-hint">Así te verá la comunidad.</p>
-        <div className="profile-picker-options" role="radiogroup" aria-label="Diseño del perfil" onKeyDown={moveSelection}>
-          {PROFILE_THEMES.map(theme => (
-            <button key={theme.id} type="button" role="radio" aria-checked={draftId === theme.id} aria-label={theme.name} tabIndex={draftId === theme.id ? 0 : -1} className="profile-picker-option" onClick={() => preview(theme.id)} disabled={saving || disabled}>
+        <div className="profile-picker-collections" role="radiogroup" aria-label="Diseño del perfil" onKeyDown={moveSelection}>
+          {[{ name: 'VIP', requiredLevel: 10, themes: PROFILE_THEMES.filter(theme => theme.minLevel <= 10) }, { name: 'VIP Trueno', requiredLevel: 15, themes: PROFILE_THEMES.filter(theme => theme.minLevel === 15) }].map(collection => (
+            <section key={collection.name} className="profile-picker-collection" aria-label={`Estilos ${collection.name}`}>
+              <div className="profile-picker-collection-heading"><h3>{collection.name}</h3><span>{Number(level) >= collection.requiredLevel ? `${collection.themes.length} estilos` : `Nivel ${collection.requiredLevel}`}</span></div>
+              <div className="profile-picker-options">
+          {collection.themes.map(theme => (
+            <button key={theme.id} type="button" data-theme-option={theme.id} data-locked={!canUseProfileTheme(theme.id, level)} role="radio" aria-checked={draftId === theme.id} aria-label={`${theme.name}${canUseProfileTheme(theme.id, level) ? '' : ` · requiere ${theme.minLevel === 15 ? 'VIP Trueno' : 'VIP'}`}`} tabIndex={draftId === theme.id ? 0 : -1} className="profile-picker-option" onClick={() => preview(theme.id)} disabled={saving || disabled || !canUseProfileTheme(theme.id, level)}>
               <div className="profile-theme-mini" data-preview-theme={theme.id} style={getProfileThemeStyle(theme.id, draftColor)} aria-hidden="true">
                 <div className="profile-mini-banner" />
                 <div className="profile-mini-avatar"><span>THC</span></div>
@@ -94,11 +100,14 @@ export default function PerfilThemePicker({ themeId, color, onPreview, onSave, o
                 <div className="profile-mini-line" />
                 <div className="profile-mini-card" /><div className="profile-mini-card profile-mini-card-second" />
                 {theme.id === 'club' && <strong className="profile-mini-number">10</strong>}
-                {theme.id === 'terminal' && <span className="profile-mini-code">[ PLAYER ]</span>}
+                {theme.id === 'terminal' && <span className="profile-mini-code">$ thc --profile</span>}
                 {theme.animated && <span className={`profile-mini-motion profile-mini-motion--${theme.id}`} />}
               </div>
-              <span className="profile-picker-option-name">{theme.name}{draftId === theme.id ? <Check size={16} /> : theme.animated && <span className="profile-option-motion" aria-label="Animado"><i /><i /><i /></span>}</span>
+              <span className="profile-picker-option-name">{theme.name}{!canUseProfileTheme(theme.id, level) ? <LockKeyhole size={14} /> : draftId === theme.id ? <Check size={16} /> : theme.animated && <span className="profile-option-motion" aria-label="Animado"><i /><i /><i /></span>}</span>
             </button>
+          ))}
+              </div>
+            </section>
           ))}
         </div>
         <div className="profile-picker-selection"><strong>{selectedTheme.name}</strong><span>{selectedTheme.description}</span>{selectedTheme.animated && <span className="profile-picker-motion-label">En movimiento</span>}</div>
@@ -106,7 +115,7 @@ export default function PerfilThemePicker({ themeId, color, onPreview, onSave, o
         <div className="profile-picker-status" role="status">{error || (isDirty ? 'Vista previa · todavía sin guardar' : 'Este es tu estilo guardado')}</div>
         <footer className="profile-picker-footer">
           <button type="button" className="theme-btn-secondary" onClick={onCancel} disabled={saving || disabled}>Cancelar</button>
-          <button type="button" className="theme-btn-primary" onClick={save} disabled={!isDirty || saving || disabled}><Save size={16} /> {saving ? 'Guardando…' : 'Guardar estilo'}</button>
+          <button type="button" className="theme-btn-primary" onClick={save} disabled={!isDirty || saving || disabled || !canSave}><Save size={16} /> {saving ? 'Guardando…' : 'Guardar estilo'}</button>
         </footer>
       </section>
     </div>

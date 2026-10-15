@@ -40,6 +40,11 @@
 .fdetail-attachments img { width: 100%; aspect-ratio: 4 / 3; object-fit: contain; background: #090807; }
 .fdetail-attachments > a > span { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 15px; color: #d6b896; font-size: 14px; font-weight: 650; }
 .fdetail-attachments > a > span > svg { color: #ff7f11; }
+.fdetail-attachments--comment { max-width: 600px; margin: 18px 0 22px; gap: 12px; }
+.fdetail-attachments--comment img { max-height: 220px; }
+.fdetail-comment-compose .foro-file-picker-button { background: #f7f1e4; color: #3d2d1d; border-color: #bbae95; }
+.fdetail-comment-compose .foro-file-picker-button:hover { background: #f7e4c8; border-color: #bc691d; }
+.fdetail-comment-compose .foro-file-picker-limit { color: #675841; }
 .fdetail-discussion { padding-left: 165px; margin-top: 53px; }
 .fdetail-discussion-heading { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin-bottom: 26px; }
 .fdetail-eyebrow { display: inline-block; font-size: 12px; line-height: 1.5; color: #c89970; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; }

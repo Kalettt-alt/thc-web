@@ -155,6 +155,22 @@
 .foro-compose-images > div { position: relative; }
 .foro-compose-images img { width: 122px; height: 93px; border: 1px solid #574329; border-radius: 8px; object-fit: cover; }
 .foro-compose-images button { position: absolute; right: 4px; top: 4px; display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border: 1px solid #69543c; border-radius: 50%; background: #0c0b09e8; color: #f2ecdf; cursor: pointer; }
+.foro-file-picker { margin-top: 12px; }
+.foro-file-picker-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.foro-file-picker-button { position: relative; display: inline-flex; align-items: center; gap: 9px; min-height: 44px; padding: 11px 16px; border: 1px solid #654b2e; border-radius: 8px; background: #292015; color: #f2ecdf; font-size: 15px; font-weight: 700; cursor: pointer; transition: border-color .2s, background .2s; }
+.foro-file-picker-button:hover { border-color: #ff7f11; background: #3a2815; }
+.foro-file-picker-button:focus-within { outline: 2px solid #ff7f11; outline-offset: 3px; }
+.foro-file-picker-button[data-disabled="true"] { opacity: .5; cursor: default; }
+.foro-file-picker-input { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.foro-file-picker-limit { color: #b4a694; font-size: 13px; line-height: 1.45; }
+.foro-file-picker-previews { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 12px; margin-top: 15px; max-width: 570px; }
+.foro-file-picker-previews > figure { position: relative; min-width: 0; margin: 0; overflow: hidden; border: 1px solid #60472b; border-radius: 8px; background: #17130f; }
+.foro-file-picker-previews img { width: 100%; height: 112px; display: block; object-fit: cover; }
+.foro-file-picker-previews button { position: absolute; right: 5px; top: 5px; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 1px solid #796447; border-radius: 50%; background: #11100eee; color: #fff1dc; cursor: pointer; }
+.foro-file-picker-previews button:disabled { opacity: .45; }
+.foro-file-picker-previews figcaption { padding: 7px 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 1.4; color: #cbbca6; }
+.foro-file-picker--compact { margin-top: 15px; }
+.foro-file-picker--compact .foro-file-picker-button { min-height: 40px; padding: 9px 12px; font-size: 14px; }
 .foro-compose-footer { display: flex; justify-content: flex-end; align-items: center; gap: 16px; flex-shrink: 0; padding: 21px 34px; border-top: 1px solid #40382d; background: #17130f; }
 .foro-compose-footer > button:not(.foro-primary) { min-height: 44px; padding: 11px 10px; border: 0; background: transparent; color: #aaa297; font-size: 16px; font-weight: 650; cursor: pointer; transition: color .2s; }
 .foro-compose-footer > button:not(.foro-primary):hover { color: #f2ecdf; }

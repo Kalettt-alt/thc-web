@@ -1,0 +1,14 @@
+.profile-ambient {
+  position:fixed;
+  inset:0;
+  z-index:0;
+  pointer-events:none;
+  overflow:hidden;
+  contain:strict;
+}
+.profile-ambient canvas { display:block; width:100%; height:100%; pointer-events:none; }
+.profile-ambient[data-ambient-theme="casino"] { opacity:.95; }
+.profile-ambient[data-ambient-theme="lienzo"] { mix-blend-mode:multiply; opacity:.76; }
+.profile-ambient[data-ambient-theme="aurora"] { opacity:.88; }
+.profile-ambient[data-ambient-mode="calm"] { opacity:.55; }
+.profile-ambient[data-ambient-mode="off"] { opacity:.3; }

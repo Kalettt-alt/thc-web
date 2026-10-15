@@ -1,6 +1,6 @@
 # Perfiles y sobres manuales · 3 de octubre de 2026
 
-Guía actualizada al 10 de octubre de 2026 para el parche de apariencia v2.
+Esta guía describe el parche histórico v2. Para la renovación del 12 de octubre usa [PERFILES_AMIGOS_2026-10-12.md](PERFILES_AMIGOS_2026-10-12.md) y ejecuta `ComandosSQL_PerfilesAmigos.txt` completo. Las copias actuales de apariencia se actualizaron a v3; Estadio se retiró y los estilos premium requieren nivel 15.
 
 Ya aplicaste `ComandosSQL.txt`: conserva esa instalación del álbum. No es necesario repetirla para cambiar su diseño. La aplicación mantiene cinco cromos por sobre y consume el saldo existente; este cambio no concede sobres al entrar, registrarse ni cambiar de estilo.
 

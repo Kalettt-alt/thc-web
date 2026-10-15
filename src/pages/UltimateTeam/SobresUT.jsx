@@ -2,15 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { ArrowLeft, ArrowUpRight, RefreshCw, Search } from 'lucide-react';
 import { supabase } from '../../utils/supabase';
-import { JUGADORES_BASE } from './data/jugadoresBase';
+import { openStarterPackUT } from './starterPackUT';
 import { catalogCard, EXAMPLE_CARD, isUtSchemaMissing, utRequestError } from './utCards';
 import { openUtPack, readPendingUtPack } from './packRequestsUT';
 import PlayerCardUT from './PlayerCardUT';
 import PlayerCardDetailsUT from './PlayerCardDetailsUT';
 import './SobresUT.css';
+import packArtwork from './SobreUT.webp';
 
 function Pack({name='THC BASE',quantity=5,opening=false}) {
-  return <span className={`ut-pack-art ${opening?'is-opening':''}`} aria-hidden="true"><span className="ut-pack-art__lid"/><span className="ut-pack-art__body"><span className="ut-pack-art__brand">THC</span><b>UT</b><i>{name}</i><span className="ut-pack-art__quantity">{quantity} JUGADORES</span></span><span className="ut-pack-art__shine"/></span>;
+  return <span className={`ut-pack-art ut-pack-art--supplied ${opening?'is-opening':''}`} aria-hidden="true"><img className="ut-pack-art__image" src={packArtwork} alt="" draggable="false"/><span className="ut-pack-art__caption"><b>{name}</b><small>{quantity} JUGADORES</small></span><span className="ut-pack-art__shine"/></span>;
 }
 
 export default function SobresUT({onVolver,isTutorial=false,onTutorialComplete,initialView='sobres'}) {
@@ -69,7 +70,7 @@ export default function SobresUT({onVolver,isTutorial=false,onTutorialComplete,i
     if(lock.current||(!isTutorial&&!pack&&!pending))return;
     lock.current=true;setOpening(true);setError('');
     try{
-      if(isTutorial)setCards(JUGADORES_BASE);
+      if(isTutorial)setCards(await openStarterPackUT(supabase));
       else{
         const receipt=await openUtPack(supabase,pending?.packId||pack.id,userId,localStorage);
         setCards(receipt.cartas.map(row=>catalogCard(row.carta,row.id)));setPending(null);
@@ -79,7 +80,7 @@ export default function SobresUT({onVolver,isTutorial=false,onTutorialComplete,i
     }catch(err){setPending(readPendingUtPack(localStorage,userId));setError(utRequestError(err,'No se pudo confirmar la apertura. Vuelve a intentarlo.'));}
     finally{lock.current=false;setOpening(false);}
   };
-  const finish=()=>{if(isTutorial)onTutorialComplete?.(JUGADORES_BASE);else{setPhase('closed');setSelectedPack(0);setAttempt(n=>n+1);}};
+  const finish=()=>{if(isTutorial)onTutorialComplete?.(cards);else{setPhase('closed');setSelectedPack(0);setAttempt(n=>n+1);}};
   const changeView=next=>{if(opening||phase==='opening')return;setView(next);setPage(0);setDetail(null);};
   const preview=catalog.length?catalog:(!query&&!position&&page===0?[EXAMPLE_CARD]:[]);
   return <div className="ut-packs" inert={Boolean(detail)}>

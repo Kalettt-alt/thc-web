@@ -83,6 +83,12 @@ function GameChapter({ game, enabled, loopsPaused }) {
 }
 
 function Hero({ enabled, loopsPaused }) {
+  const [flashPaused, setFlashPaused] = useState(() => { try { return localStorage.getItem('thc:home-flash:v1') === 'off'; } catch { return false; } });
+  const toggleFlash = () => setFlashPaused(previous => {
+    const next = !previous;
+    try { localStorage.setItem('thc:home-flash:v1', next ? 'off' : 'on'); } catch { /* La pausa funciona aunque el navegador bloquee el almacenamiento. */ }
+    return next;
+  });
   const ref = useRef(null);
   const visible = useInView(ref);
   const { scrollYProgress } = useScroll({ target: ref, offset: ['start start', 'end start'] });
@@ -92,8 +98,8 @@ function Hero({ enabled, loopsPaused }) {
   const rotation = useTransform(scrollYProgress, [0, 1], [0, 12]);
   const photoY = useTransform(scrollYProgress, [0, 1], [0, -115]);
   return <section ref={ref} className={`home-hero ${visible && !loopsPaused ? 'is-visible' : ''}`} aria-labelledby="home-title">
-    <div className="home-shell home-hero-top"><p className="home-kicker"><Zap size={19} aria-hidden="true" /> TRUENO HAXBALL COMMUNITY</p><a href="#universo" className="home-hero-discover">Conoce tu próximo juego <ArrowDown size={20} aria-hidden="true" /></a></div>
-    <div className="home-hero-brand"><h1 id="home-title" aria-label="THC. Vivimos el juego."><motion.span aria-hidden="true" style={enabled ? { y: leftY } : { y: 0 }}>T</motion.span><motion.span className="home-hero-h" aria-hidden="true" style={enabled ? { y: middleY } : { y: 0 }}>H</motion.span><motion.span aria-hidden="true" style={enabled ? { y: rightY, rotate: rotation } : { y: 0, rotate: 0 }}>C</motion.span></h1><svg className="home-hero-star" viewBox="0 0 100 100" aria-hidden="true"><path d="M50 0L59 31L85 15L69 41L100 50L69 59L85 85L59 69L50 100L41 69L15 85L31 59L0 50L31 41L15 15L41 31Z" /></svg></div>
+    <div className="home-shell home-hero-top"><p className="home-kicker"><Zap size={19} aria-hidden="true" /> TRUENO HAXBALL COMMUNITY</p><div className="home-hero-tools"><a href="#universo" className="home-hero-discover">Conoce tu próximo juego <ArrowDown size={20} aria-hidden="true" /></a><button type="button" className="home-flash-control" aria-pressed={flashPaused} onClick={toggleFlash}>{flashPaused ? <Play size={14} aria-hidden="true"/> : <Pause size={14} aria-hidden="true"/>}{flashPaused ? 'Reanudar parpadeo' : 'Pausar parpadeo'}</button></div></div>
+    <div className="home-hero-brand"><h1 id="home-title" aria-label="THC. Vivimos el juego." data-motion="on" data-flash={flashPaused ? 'paused' : 'playing'}><motion.span aria-hidden="true" style={enabled ? { y: leftY } : { y: 0 }}>T</motion.span><motion.span className="home-hero-h" aria-hidden="true" style={enabled ? { y: middleY } : { y: 0 }}>H</motion.span><motion.span aria-hidden="true" style={enabled ? { y: rightY, rotate: rotation } : { y: 0, rotate: 0 }}>C</motion.span></h1><svg className="home-hero-star" viewBox="0 0 100 100" aria-hidden="true"><path d="M50 0L59 31L85 15L69 41L100 50L69 59L85 85L59 69L50 100L41 69L15 85L31 59L0 50L31 41L15 15L41 31Z" /></svg></div>
     <div className="home-shell home-hero-bottom"><Reveal enabled={enabled} className="home-hero-statement"><p>VIVIMOS<br /><span>EL JUEGO.</span></p><span>Dentro de la cancha.<br />Y mucho más allá.</span></Reveal><Reveal enabled={enabled} delay={0.1} className="home-hero-copy"><p>Dirige un equipo. Crea tu club. Completa tu colección. Una comunidad, muchas formas de jugar.</p><a href="#universo" className="home-button home-button--orange">Descubre THC <ArrowUpRight size={25} aria-hidden="true" /></a></Reveal><motion.div className="home-hero-photo" style={enabled ? { y: photoY, rotate: 5 } : { y: 0, rotate: 5 }}><img src="/imagenes/FondoInicio.jpg" alt="Una partida de Haxball de la comunidad THC" width="1920" height="1080" fetchPriority="high" /><span>EL JUEGO QUE NOS UNE. <Zap size={18} aria-hidden="true" /></span></motion.div></div>
   </section>;
 }

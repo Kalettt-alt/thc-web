@@ -1,3 +1,5 @@
+import { COUNTRY_ASSETS_UT } from './countryAssetsUT.js';
+
 export const FIELD_STATS = [['pac', 'PAC'], ['sho', 'SHO'], ['pas', 'PAS'], ['dri', 'DRI'], ['def', 'DEF'], ['phy', 'PHY']];
 export const KEEPER_STATS = [['gk_div', 'DIV'], ['gk_han', 'HAN'], ['gk_kic', 'KIC'], ['gk_ref', 'REF'], ['gk_spd', 'SPE'], ['gk_pos', 'POS']];
 export const CARD_DESIGNS = Object.freeze({
@@ -54,6 +56,11 @@ const countryData = {
   JP: ['Japón', ['japon', 'japan', 'jpn'], '<path fill="#fff" d="M0 0h60v40H0z"/><circle cx="30" cy="20" r="11" fill="#bc002d"/>'],
   CA: ['Canadá', ['canada', 'can'], '<path fill="#fff" d="M0 0h60v40H0z"/><path fill="#d80621" d="M0 0h15v40H0zM45 0h15v40H45z"/><path fill="#d80621" d="m30 7 3 8 5-2-1 7 5 2-9 7v6h-6v-6l-9-7 5-2-1-7 5 2z"/>'],
 };
+countryData.FO = ['Islas Feroe', ['feroe', 'faroe islands', 'fro'], ''];
+countryData.VA = ['Vaticano', ['vaticano', 'vatican', 'vat'], ''];
+countryData.RU = ['Rusia', ['rusia', 'russia', 'rus'], ''];
+countryData.SM = ['San Marino', ['sanmarino', 'san marino', 'smr'], ''];
+countryData.US[1].push('eeuu', 'ee.uu.');
 const normalizeCountryName = value => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
 const countryAliases = new Map(Object.entries(countryData).flatMap(([code, [name, aliases]]) => [code, name, ...aliases].map(alias => [normalizeCountryName(alias), code])));
 const countryFlags = new Map(Object.entries(countryData).map(([code, [, , shapes]]) => [code, `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 40">${shapes}</svg>`)}`]));
@@ -62,7 +69,7 @@ export function cardCountry(value) {
   const input = typeof value === 'object' && value ? value.nacionalidad || value.pais_codigo || '' : value;
   const raw = typeof input === 'string' ? input.trim().slice(0, 60) : '';
   const code = countryAliases.get(normalizeCountryName(raw)) || (/^[a-z]{2}$/i.test(raw) ? raw.toUpperCase() : null);
-  return { code, name: countryData[code]?.[0] || raw || 'Sin país', flagUrl: countryFlags.get(code) || null };
+  return { code, name: countryData[code]?.[0] || raw || 'Sin país', flagUrl: COUNTRY_ASSETS_UT[code] || countryFlags.get(code) || null };
 }
 
 export function cardAsset(value, designs = {}) {

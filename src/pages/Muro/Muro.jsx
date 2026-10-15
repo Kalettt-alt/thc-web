@@ -3,11 +3,13 @@ import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { RUTAS } from '../../utils/rutas';
 import { supabase } from '../../utils/supabase';
-import { ArrowLeft, Flame, Plus, X, UploadCloud, Trash2, Clock, Type, AlignLeft, ArrowBigUp, ArrowBigDown, ArrowUpRight, MoveHorizontal, MousePointer2, Zap } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Flame, Plus, X, UploadCloud, Trash2, Clock, Type, AlignLeft, ArrowBigUp, ArrowBigDown, ArrowUpRight, MoveHorizontal, MousePointer2, Zap } from 'lucide-react';
 import toast from 'react-hot-toast';
 import DomeGallery from './DomeGallery';
 import { validateImageFile } from '../../utils/media';
 import { useHomeMotion } from '../../utils/homeMotion';
+import { isMuroQuotaError, muroQuotaLabel, muroQuotaRestartLabel, muroStoragePath, parseMuroQuota } from './muroQuota';
+import { readMuroPage, readMuroVotes } from './muroFeed';
 import './Muro.css';
 
 function ImagePreview({ file }) {
@@ -32,12 +34,20 @@ export default function Muro({ session }) {
   const restoreFocusTimer = useRef(null);
   const pageMounted = useRef(false);
   const [publicaciones, setPublicaciones] = useState([]);
+  const [totalPublicaciones, setTotalPublicaciones] = useState(0);
+  const [galleryHistory, setGalleryHistory] = useState([null]);
+  const [galleryPage, setGalleryPage] = useState(0);
+  const [nextPage, setNextPage] = useState(null);
+  const [pageLoading, setPageLoading] = useState(false);
   const [cargando, setCargando] = useState(true);
   const [modalSubir, setModalSubir] = useState(false); 
   const [titulo, setTitulo] = useState('');
   const [descripcion, setDescripcion] = useState('');
   const [archivo, setArchivo] = useState(null);
   const [subiendo, setSubiendo] = useState(false);
+  const [quota, setQuota] = useState(null);
+  const [quotaLoading, setQuotaLoading] = useState(false);
+  const [quotaError, setQuotaError] = useState('');
   const [itemSeleccionado, setItemSeleccionado] = useState(null);
   
                                      
@@ -45,19 +55,64 @@ export default function Muro({ session }) {
   const [misVotos, setMisVotos] = useState({});
   const votosPendientes = useRef(new Set());
   const loadVersion = useRef({ value: 0 });
+  const quotaVersion = useRef({ value: 0 });
+  const uploading = useRef(false);
+  const deleting = useRef(new Set());
   const userId = session?.user?.id;
+  const galleryCursor = galleryHistory[galleryPage];
+
+  const refreshQuota = useCallback(async () => {
+    const version = ++quotaVersion.current.value;
+    if (!userId) {
+      setQuota(null); setQuotaLoading(false); setQuotaError('');
+      return null;
+    }
+    setQuotaLoading(true);
+    try {
+      const { data, error } = await supabase.rpc('thc_muro_cupo');
+      if (error) throw error;
+      const next = parseMuroQuota(data);
+      if (version === quotaVersion.current.value) { setQuota(next); setQuotaError(''); }
+      return next;
+    } catch {
+      if (version === quotaVersion.current.value) {
+        setQuota(null);
+        setQuotaError('No pudimos comprobar tus cupos. Inténtalo otra vez.');
+      }
+      return null;
+    } finally {
+      if (version === quotaVersion.current.value) setQuotaLoading(false);
+    }
+  }, [userId]);
+
+  useEffect(() => {
+    const tracker = quotaVersion.current;
+    void Promise.resolve().then(refreshQuota);
+    const onFocus = () => { if (document.visibilityState === 'visible') void refreshQuota(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      tracker.value++;
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
+  }, [refreshQuota]);
+
+  useEffect(() => {
+    if (!quota?.refreshAt) return;
+    const timer = setTimeout(() => void refreshQuota(), Math.min(2147483647, Math.max(1000, quota.refreshAt - Date.now() + 250)));
+    return () => clearTimeout(timer);
+  }, [quota, refreshQuota]);
 
   const cargarPublicaciones = useCallback(async () => {
     const version = ++loadVersion.current.value;
+    setPageLoading(true);
     try {
                               
-    const { data: muroData, error } = await supabase
-      .from('muro_publicaciones')
-      .select('*, autor:perfiles!muro_publicaciones_autor_id_fkey(discord_nombre, avatar_url)')
-      .order('creado_en', { ascending: false });
-
-    if (error) throw error;
+    const { rows: muroData, count, next } = await readMuroPage(supabase, galleryCursor);
     if (version !== loadVersion.current.value) return;
+    setNextPage(next);
+    if (!galleryCursor && Number.isInteger(count)) setTotalPublicaciones(count);
     if (muroData) {
       const mapeadas = muroData.map(pub => ({
         ...pub,
@@ -69,8 +124,7 @@ export default function Muro({ session }) {
     }
 
                       
-    const { data: votosData, error: votosError } = await supabase.from('muro_votos').select('publicacion_id, usuario_id, tipo');
-    if (votosError) throw votosError;
+    const votosData = await readMuroVotes(supabase, muroData.map(pub => pub.id));
     if (version !== loadVersion.current.value) return;
     if (votosData) {
       const conteo = {};
@@ -91,8 +145,13 @@ export default function Muro({ session }) {
     }
     } catch {
       toast.error('No pudimos cargar el muro. Revisa tu conexión y vuelve a entrar.');
-    } finally { if (version === loadVersion.current.value) setCargando(false); }
-  }, [userId]);
+    } finally { if (version === loadVersion.current.value) { setCargando(false); setPageLoading(false); } }
+  }, [userId, galleryCursor]);
+
+  const refreshFeed = () => {
+    if (galleryPage === 0) void cargarPublicaciones();
+    else { setGalleryHistory([null]); setGalleryPage(0); }
+  };
 
   useEffect(() => {
     const tracker = loadVersion.current;
@@ -170,17 +229,23 @@ export default function Muro({ session }) {
 
   const handleSubirMomento = async (e) => {
     e.preventDefault();
-    if (subiendo) return;
+    if (uploading.current) return;
+    if (!session?.user) { toast.error('Inicia sesión para subir un momento.'); return; }
     if (!archivo || !titulo.trim() || !descripcion.trim()) {
       toast.error('Todos los campos son obligatorios.'); return;
     }
 
+    uploading.current = true;
     setSubiendo(true);
     const toastId = toast.loading('Subiendo evidencia...', { style: { background: '#111', color: '#fff' }});
 
     let uploadedFile;
+    let uploadedUrl;
     let inserted = false;
     try {
+      const currentQuota = await refreshQuota();
+      if (!currentQuota) throw new Error('No pudimos comprobar tus cupos. Inténtalo otra vez.');
+      if (!currentQuota.available) throw new Error('THC_MURO_WEEKLY_LIMIT');
       const fileExt = await validateImageFile(archivo);
       const fileName = `${session.user.id}_${crypto.randomUUID()}.${fileExt}`;
 
@@ -189,6 +254,7 @@ export default function Muro({ session }) {
       uploadedFile = fileName;
 
       const { data: urlData } = supabase.storage.from('muro_media').getPublicUrl(fileName);
+      uploadedUrl = urlData.publicUrl;
 
       const { data: insertData, error: insertError } = await supabase.from('muro_publicaciones').insert([{
         autor_id: session.user.id,
@@ -203,18 +269,44 @@ export default function Muro({ session }) {
       toast.success('Momento Subido.', { id: toastId });
       setModalSubir(false);
       setTitulo(''); setDescripcion(''); setArchivo(null);
-      cargarPublicaciones();
-    } catch {
+      refreshFeed();
+      void refreshQuota();
+    } catch (error) {
+      // A lost response can hide a successful insert. Confirm the unique image
+      // URL before removing it, otherwise the saved photo would become broken.
+      let confirmed = false;
+      let safeToClean;
       if (uploadedFile && !inserted) {
-        try { await supabase.storage.from('muro_media').remove([uploadedFile]); } catch { toast.error('No se pudo limpiar la imagen pendiente.', { id: 'muro-cleanup' }); }
+        try {
+          const result = await supabase.from('muro_publicaciones').select('id').eq('autor_id', userId).eq('imagen_url', uploadedUrl).maybeSingle();
+          safeToClean = !result.error;
+          confirmed = !!result.data;
+        } catch { safeToClean = false; }
+        if (!confirmed && safeToClean) {
+          try {
+            const result = await supabase.storage.from('muro_media').remove([uploadedFile]);
+            if (result.error) toast.error('No se pudo limpiar la imagen pendiente.', { id: 'muro-cleanup' });
+          } catch { toast.error('No se pudo limpiar la imagen pendiente.', { id: 'muro-cleanup' }); }
+        }
       }
-      toast.error('No se pudo publicar la imagen. Tu formulario sigue disponible.', { id: toastId });
+      if (confirmed) {
+        toast.success('Momento subido.', { id: toastId });
+        setModalSubir(false); setTitulo(''); setDescripcion(''); setArchivo(null);
+        refreshFeed();
+      } else {
+        toast.error(isMuroQuotaError(error) ? 'Ya tienes 3 fotos esta semana. Borra una para liberar un cupo o espera al próximo ciclo.' : 'No se pudo publicar la imagen. Tu formulario sigue disponible.', { id: toastId });
+      }
+      void refreshQuota();
     } finally {
+      uploading.current = false;
       setSubiendo(false);
     }
   };
 
   const borrarPublicacion = async (id) => {
+    if (!userId || deleting.current.has(id)) return;
+    deleting.current.add(id);
+    const publication = publicaciones.find(item => item.id === id);
     const toastId = toast.loading('Borrando...', { style: { background: '#111', color: '#fff' }});
     try {
     const { data, error } = await supabase.from('muro_publicaciones').delete().eq('id', id).eq('autor_id', session.user.id).select('id');
@@ -224,10 +316,19 @@ export default function Muro({ session }) {
                                                     
       document.querySelector('.scrim')?.click();
       setItemSeleccionado(null);
-      cargarPublicaciones();
+      refreshFeed();
+      void refreshQuota();
+      if (publication?.imagen_url) {
+        const storageOrigin = supabase.storage.from('muro_media').getPublicUrl('_').data?.publicUrl;
+        const path = muroStoragePath(publication.imagen_url, userId, storageOrigin);
+        if (path) {
+          try { await supabase.storage.from('muro_media').remove([path]); }
+          catch { /* The deleted photo already released its quota in PostgreSQL. */ }
+        }
+      }
     } catch {
       toast.error('Error al eliminar.', { id: toastId });
-    }
+    } finally { deleting.current.delete(id); }
   };
 
   useEffect(() => {
@@ -376,11 +477,17 @@ export default function Muro({ session }) {
           {!itemSeleccionado && !modalSubir && (
             <motion.div className="muro-toolbar" initial={motionEnabled ? { opacity: 0, y: 20 } : false} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }}>
               <div className="muro-guide">
-                <p>{publicaciones.length ? `${publicaciones.length} ${publicaciones.length === 1 ? 'momento' : 'momentos'}. Una sola comunidad.` : 'El siguiente momento puede ser tuyo.'}</p>
+                <p>{totalPublicaciones ? `${totalPublicaciones} ${totalPublicaciones === 1 ? 'momento' : 'momentos'}. Una sola comunidad.` : 'El siguiente momento puede ser tuyo.'}</p>
                 <div><span><MoveHorizontal size={18} /> Arrastra</span><span><MousePointer2 size={18} /> Abre un momento</span><span><ArrowBigUp size={18} /> Deja tu voto</span></div>
+                {userId && <span className="muro-quota-summary">{quotaError ? 'No se pudieron comprobar tus cupos' : muroQuotaLabel(quota)}</span>}
+                {(galleryPage > 0 || nextPage) && <nav className="muro-gallery-pages" aria-label="Historial del Muro">
+                  <button type="button" disabled={!galleryPage || pageLoading} onClick={() => setGalleryPage(value => value - 1)}><ArrowLeft size={15} /> Más recientes</button>
+                  <span>{pageLoading ? 'Cargando…' : `Galería ${galleryPage + 1}`}</span>
+                  <button type="button" disabled={!nextPage || pageLoading} onClick={() => { setGalleryHistory(value => [...value.slice(0, galleryPage + 1), nextPage]); setGalleryPage(value => value + 1); }}>Más antiguos <ArrowRight size={15} /></button>
+                </nav>}
               </div>
-              <button ref={publishRef} type="button" className="muro-publish" onClick={() => session?.user ? setModalSubir(true) : toast.error('Inicia sesión para subir un momento.')}>
-                <span className="muro-publish-icon"><Plus size={20} /></span><span className="muro-publish-label">Subir un momento</span><ArrowUpRight size={22} />
+              <button ref={publishRef} type="button" className="muro-publish" onClick={() => session?.user ? (setModalSubir(true), void refreshQuota()) : toast.error('Inicia sesión para subir un momento.')}>
+                <span className="muro-publish-icon"><Plus size={20} /></span><span className="muro-publish-label">{quota?.available === 0 ? 'Ver mis cupos' : 'Subir un momento'}</span><ArrowUpRight size={22} />
               </button>
             </motion.div>
           )}
@@ -438,6 +545,13 @@ export default function Muro({ session }) {
                 </div>
                 <form onSubmit={handleSubirMomento} className="muro-form" aria-busy={subiendo}>
                   <p className="muro-form-intro">La jugada, el blooper o esa captura que merece quedarse. Dale contexto y compártela.</p>
+                  <div className={`muro-quota${quota?.available === 0 ? ' is-full' : ''}`} role="status" aria-live="polite">
+                    <strong><Clock size={17} />{quotaError || muroQuotaLabel(quota)}</strong>
+                    {quotaError ? <button type="button" disabled={quotaLoading || subiendo} onClick={() => void refreshQuota()}>{quotaLoading ? 'Comprobando…' : 'Reintentar'}</button> : <>
+                      <p>{muroQuotaRestartLabel(quota)}</p>
+                      <p>Borrar una foto libera un cupo. Si borras la primera, la semana empieza en la siguiente.</p>
+                    </>}
+                  </div>
                   <div className="muro-field">
                     <div className="muro-label-row"><label htmlFor="muro-image"><UploadCloud size={17} /> Tu imagen</label><span>Obligatoria</span></div>
                     <div className={`muro-file${archivo ? ' is-ready' : ''}`}>
@@ -453,7 +567,7 @@ export default function Muro({ session }) {
                     <div className="muro-label-row"><label htmlFor="muro-description"><AlignLeft size={17} /> ¿Qué pasó?</label><span>{descripcion.length}/100</span></div>
                     <textarea id="muro-description" rows={3} maxLength={100} value={descripcion} onChange={e => setDescripcion(e.target.value)} required disabled={subiendo} placeholder="Cuenta lo que no se ve en la imagen…" />
                   </div>
-                  <button type="submit" disabled={subiendo || !archivo || !titulo.trim() || !descripcion.trim()} className="muro-submit">
+                  <button type="submit" disabled={subiendo || quotaLoading || !quota?.available || !archivo || !titulo.trim() || !descripcion.trim()} className="muro-submit">
                     <span>{subiendo ? 'Subiendo tu momento…' : 'Publicar en el muro'}</span>{subiendo ? <span className="muro-button-spinner" aria-hidden="true" /> : <ArrowUpRight size={23} />}
                   </button>
                 </form>

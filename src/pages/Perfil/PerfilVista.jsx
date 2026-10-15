@@ -1,16 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import { obtenerRango } from '../../utils/roles';
-import { MessageSquare, UserPlus, Edit3, Terminal, Gamepad2, ArrowLeft, ArrowUpRight, Activity, Award, Hexagon, Music, Palette, Shield, Sparkles } from 'lucide-react';
+import { MessageSquare, Edit3, Terminal, Gamepad2, ArrowLeft, ArrowUpRight, Activity, Award, Hexagon, Music, Palette, Shield, Sparkles } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { RUTAS } from '../../utils/rutas';
 import { supabase } from '../../utils/supabase';
-import { motion, MotionConfig, useReducedMotion } from 'framer-motion';
+import { motion, MotionConfig } from 'framer-motion';
 import toast from 'react-hot-toast';
 import PerfilComentarios from './PerfilComentarios';
 import PerfilThemePicker from './PerfilThemePicker';
-import { canPersonalizeProfile, getProfileTheme, getProfileThemeStyle, saveProfileTheme } from '../../utils/profileThemes';
+import PerfilAmigos, { ProfileFriendButton } from './PerfilAmigos';
+import { canPersonalizeProfile, canUseProfileTheme, getProfileTheme, getProfileThemeStyle, saveProfileTheme } from '../../utils/profileThemes';
 import { safeHexColor, safeProfileTheme } from '../../utils/media';
-import { useHomeMotion } from '../../utils/homeMotion';
+import { useProfileEffects } from './useProfileEffects';
+import ProfileEffectsControl from './ProfileEffectsControl';
+import ProfileAmbient from './ProfileAmbient';
+import CasinoArtwork from './CasinoArtwork';
 import { spotifyTrack as getSpotifyTrack, profileImageUrl, profileNumber as bounded } from '../../utils/profileSettings';
 import './PerfilThemes.css';
 
@@ -33,12 +37,44 @@ function imageFallback(event) {
   image.src = FALLBACK_IMAGE;
 }
 
-function ProfileWidget({ title, index }) {
+function ProfileWidget({ title, index, effectsMode }) {
+  const hoverFrame = useRef(null);
+  const cardRef = useRef(null);
+  useEffect(() => {
+    const card = cardRef.current;
+    return () => {
+      if (hoverFrame.current !== null) cancelAnimationFrame(hoverFrame.current);
+      hoverFrame.current = null;
+      card?.style.setProperty('--card-tilt-x', '0deg');
+      card?.style.setProperty('--card-tilt-y', '0deg');
+    };
+  }, [effectsMode]);
+  const trackPointer = event => {
+    if (effectsMode !== 'full' || event.pointerType === 'touch') return;
+    const card = event.currentTarget;
+    const bounds = card.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width));
+    const y = Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height));
+    if (hoverFrame.current !== null) cancelAnimationFrame(hoverFrame.current);
+    hoverFrame.current = requestAnimationFrame(() => {
+      card.style.setProperty('--card-pointer-x', `${x * 100}%`);
+      card.style.setProperty('--card-pointer-y', `${y * 100}%`);
+      card.style.setProperty('--card-tilt-x', `${(0.5 - y) * 5}deg`);
+      card.style.setProperty('--card-tilt-y', `${(x - 0.5) * 5}deg`);
+      hoverFrame.current = null;
+    });
+  };
+  const resetPointer = event => {
+    if (hoverFrame.current !== null) cancelAnimationFrame(hoverFrame.current);
+    hoverFrame.current = null;
+    event.currentTarget.style.setProperty('--card-tilt-x', '0deg');
+    event.currentTarget.style.setProperty('--card-tilt-y', '0deg');
+  };
   const widget = WIDGETS[title];
   if (!widget) return null;
   return (
     <motion.div variants={itemVariants} className="profile-widget-wrap">
-      <Link to={widget.href} className="theme-panel profile-widget">
+      <Link ref={cardRef} to={widget.href} className="theme-panel profile-widget" data-profile-interactive onPointerMove={trackPointer} onPointerLeave={resetPointer}>
         <img src={widget.image} onError={imageFallback} loading="lazy" alt="" className="profile-widget-image" />
         <div className="profile-widget-shade" />
         <div className="profile-widget-copy"><span>{String(index + 1).padStart(2, '0')} <i /> {widget.caption}</span><h3 className="theme-h4">{title}</h3></div>
@@ -52,20 +88,18 @@ export default function PerfilVista({ perfil, etiquetas = [], isOwnProfile, onEd
   const [preview, setPreview] = useState(null);
   const [selectorAbierto, setSelectorAbierto] = useState(false);
   const [guardandoTema, setGuardandoTema] = useState(false);
-  const [enviandoSolicitud, setEnviandoSolicitud] = useState(false);
   const saveLock = useRef(false);
-  const requestLock = useRef(false);
   const active = useRef(true);
   const navigate = useNavigate();
-  const { motionEnabled } = useHomeMotion();
-  const reducedMotion = useReducedMotion();
-  const motionActive = motionEnabled && !reducedMotion;
+  const { preference, effectsMode, setPreference } = useProfileEffects();
+  const motionActive = effectsMode === 'full';
   const actorId = session?.user?.id;
   const ownProfile = Boolean(isOwnProfile && actorId === perfil.id);
   const canCustomize = ownProfile && canPersonalizeProfile({ userId: actorId, profileId: perfil.id, level: perfil.nivel_rol });
   const pickerVisible = selectorAbierto && canCustomize;
   const visiblePreview = pickerVisible ? preview : null;
-  const themeId = safeProfileTheme(visiblePreview?.tema_perfil ?? perfil.tema_perfil);
+  const requestedTheme = safeProfileTheme(visiblePreview?.tema_perfil ?? perfil.tema_perfil);
+  const themeId = canUseProfileTheme(requestedTheme, perfil.nivel_rol) ? requestedTheme : 'default';
   const colorPixel = safeHexColor(visiblePreview?.color_pixel ?? perfil.color_pixel);
   const theme = getProfileTheme(themeId, colorPixel);
   const identityRef = useRef({ actorId, profileId: perfil.id });
@@ -101,39 +135,23 @@ export default function PerfilVista({ perfil, etiquetas = [], isOwnProfile, onEd
     }
   };
 
-  const handleAñadirAmigo = async () => {
-    if (!session?.user || requestLock.current || ownProfile) return;
-    requestLock.current = true;
-    setEnviandoSolicitud(true);
-    const toastId = toast.loading('Enviando solicitud...');
-    try {
-      const { data: solicitud, error } = await supabase.from('amigos').insert({ user_id_1: session.user.id, user_id_2: perfil.id, estado: 'pendiente' }).select('id').single();
-      if (error || !solicitud) {
-        if (error?.code === '23505') throw new Error('Ya enviaste una solicitud a este usuario.');
-        throw new Error('No se pudo enviar la solicitud. Inténtalo de nuevo.');
-      }
-      const { error: notificacionError } = await supabase.from('notificaciones').insert({ usuario_id: perfil.id, actor_id: session.user.id, tipo: 'solicitud_amistad', enlace_id: solicitud.id, contenido: 'te ha enviado una solicitud de amistad.' });
-      if (notificacionError) toast.error('Solicitud creada, pero no se pudo avisar al usuario.', { id: toastId });
-      else toast.success('Solicitud de amistad enviada.', { id: toastId });
-    } catch (error) { toast.error(error.message, { id: toastId }); }
-    finally { requestLock.current = false; if (active.current) setEnviandoSolicitud(false); }
-  };
-
   function closePicker() { if (!saveLock.current) { setPreview(null); setSelectorAbierto(false); } }
 
   return (
-    <MotionConfig reducedMotion={motionActive ? 'user' : 'always'}>
-      <div className={`perfil-master-container ${theme.className}`} data-profile-theme={theme.id} data-motion={motionActive ? 'on' : 'off'} style={getProfileThemeStyle(theme.id, colorPixel)}>
+    <MotionConfig reducedMotion={motionActive ? 'never' : 'always'}>
+      <div className={`perfil-master-container ${theme.className}`} data-profile-theme={theme.id} data-effects={effectsMode} data-motion={motionActive ? 'on' : 'off'} style={getProfileThemeStyle(theme.id, colorPixel)}>
+        {theme.animated && <ProfileAmbient themeId={theme.id} effectsMode={effectsMode} />}
         <div className="profile-background" aria-hidden="true">
-          {theme.animated && <div className={`profile-motion-art profile-motion-art--${theme.id}`}><i /><i /><i /></div>}
           {bannerMostrar && <img src={bannerMostrar} onError={event => { event.currentTarget.style.display = 'none'; }} className="profile-banner" style={{ objectPosition: `50% ${bounded(perfil.banner_pos_y, 0, 100, 50)}%` }} alt="" />}
           <div className="profile-background-wash" />
         </div>
         <nav className="profile-topbar" aria-label="Perfil" inert={pickerVisible}>
           <Link to={RUTAS.INICIO} className="profile-back"><ArrowLeft size={18} /> Regresar</Link>
           <span className="profile-topbar-mark">THC<span> / PERFIL</span></span>
-          {canCustomize && <button type="button" className="profile-style-button" onClick={() => setSelectorAbierto(true)}><Palette size={18} /> <span>Estilo</span></button>}
+          <div className="profile-view-controls">{theme.animated && <ProfileEffectsControl preference={preference} onChange={setPreference} />}{canCustomize && <button type="button" className="profile-style-button" onClick={() => setSelectorAbierto(true)}><Palette size={18} /> <span>Estilos</span></button>}</div>
         </nav>
+        {theme.id === 'cromo' && <CasinoArtwork />}
+        {theme.id === 'editorial' && bannerMostrar && <figure className="profile-editorial-cover"><img src={bannerMostrar} onError={event => { event.currentTarget.closest('figure').hidden = true; }} style={{ objectPosition: `50% ${bounded(perfil.banner_pos_y, 0, 100, 50)}%` }} alt={`Banner de ${nombreMostrar}`} /><figcaption>THC / {nombreMostrar}</figcaption></figure>}
         <motion.main variants={containerVariants} initial={motionActive ? 'hidden' : false} animate="show" className="profile-content" inert={pickerVisible}>
           <aside className="profile-sidebar">
             <div className="profile-identity">
@@ -149,21 +167,23 @@ export default function PerfilVista({ perfil, etiquetas = [], isOwnProfile, onEd
               </motion.div>
             </div>
             <motion.div variants={itemVariants} className="profile-actions">
-              {ownProfile ? <button type="button" onClick={onEdit} className="theme-btn-primary"><Edit3 size={17} /> Modificar perfil</button> : <><button type="button" onClick={handleAñadirAmigo} disabled={enviandoSolicitud || !session?.user} className="theme-btn-secondary"><UserPlus size={17} /> {enviandoSolicitud ? 'Enviando…' : 'Añadir amigo'}</button><button type="button" disabled={!session?.user} onClick={() => navigate(`/mensajes/${encodeURIComponent(perfil.discord_nombre)}`)} className="theme-btn-primary"><MessageSquare size={17} /> Mensaje</button></>}
+              {ownProfile ? <button type="button" onClick={onEdit} className="theme-btn-primary"><Edit3 size={17} /> Modificar perfil</button> : <><ProfileFriendButton profileId={perfil.id} actorId={actorId} isOwnProfile={ownProfile} /><button type="button" disabled={!session?.user} onClick={() => navigate(`/mensajes/${encodeURIComponent(perfil.discord_nombre)}`)} className="theme-btn-primary"><MessageSquare size={17} /> Mensaje</button></>}
             </motion.div>
             <div className="profile-details">
               <motion.section variants={itemVariants} className="theme-panel profile-bio"><h2 className="profile-section-label"><Activity size={15} /> Estado</h2><p>{perfil.bio || 'Sin estado...'}</p></motion.section>
               <motion.section variants={itemVariants} className="theme-panel profile-badges"><h2 className="profile-section-label"><Award size={15} /> En la cancha</h2><div className="profile-tag-list"><span className="profile-position">{perfil.posicion || 'Cualquiera'}</span>{etiquetas.map(tag => <span key={tag.id} className="profile-tag" style={{ '--tag-color': safeHexColor(tag.color, theme.accent) }}>{profileImageUrl(tag.icono_url) ? <img src={profileImageUrl(tag.icono_url)} loading="lazy" onError={event => { event.currentTarget.style.display = 'none'; }} alt="" /> : <Hexagon size={13} />}{tag.etiqueta_id}</span>)}</div></motion.section>
               {spotifyTrack && <motion.section variants={itemVariants} className="theme-panel profile-track"><h2 className="profile-section-label"><Music size={15} /> Mi canción</h2><iframe title={`Canción favorita de ${nombreMostrar}`} src={`https://open.spotify.com/embed/track/${spotifyTrack}?utm_source=generator&theme=0`} width="100%" height="80" allow="encrypted-media" loading="lazy" className="profile-spotify" /></motion.section>}
             </div>
+            {theme.id === 'cromo' && <CasinoArtwork variant="roulette" />}
           </aside>
           <section className="profile-board">
             <motion.div variants={itemVariants} className="profile-board-header"><span className="profile-kicker"><Gamepad2 size={17} /> MI ESPACIO</span><h2>{theme.id === 'editorial' ? 'Dentro del juego.' : theme.id === 'terminal' ? '/ destacados' : 'Mi tablero.'}</h2>{theme.id === 'club' && <span className="profile-club-number" aria-hidden="true">THC</span>}{theme.id === 'aurora' && <Sparkles size={34} aria-hidden="true" className="profile-aurora-mark" />}</motion.div>
-            <div className="profile-widgets">{widgets.length ? widgets.map((title, index) => <ProfileWidget key={`${index}-${title}`} title={title} index={index} />) : <motion.div variants={itemVariants} className="theme-panel profile-empty"><Gamepad2 size={30} /><p>Aquí van tus favoritos.</p>{ownProfile && <button type="button" className="theme-btn-secondary" onClick={onEdit}>Elegir destacados <ArrowUpRight size={16} /></button>}</motion.div>}</div>
+            <div className="profile-widgets">{widgets.length ? widgets.map((title, index) => <ProfileWidget key={`${index}-${title}`} title={title} index={index} effectsMode={effectsMode} />) : <motion.div variants={itemVariants} className="theme-panel profile-empty"><Gamepad2 size={30} /><p>Aquí van tus favoritos.</p>{ownProfile && <button type="button" className="theme-btn-secondary" onClick={onEdit}>Elegir destacados <ArrowUpRight size={16} /></button>}</motion.div>}</div>
+            <motion.div variants={itemVariants}><PerfilAmigos profileId={perfil.id} actorId={actorId} isOwnProfile={ownProfile} /></motion.div>
             <motion.div variants={itemVariants} className="theme-panel profile-comments"><PerfilComentarios perfilId={perfil.id} session={session} accent={theme.accent} /></motion.div>
           </section>
         </motion.main>
-        {pickerVisible && <PerfilThemePicker themeId={perfil.tema_perfil} color={perfil.color_pixel} onPreview={setPreview} onSave={aplicarTema} onCancel={closePicker} disabled={guardandoTema} />}
+        {pickerVisible && <PerfilThemePicker effectsMode={effectsMode} level={perfil.nivel_rol} themeId={perfil.tema_perfil} color={perfil.color_pixel} onPreview={setPreview} onSave={aplicarTema} onCancel={closePicker} disabled={guardandoTema} />}
       </div>
     </MotionConfig>
   );

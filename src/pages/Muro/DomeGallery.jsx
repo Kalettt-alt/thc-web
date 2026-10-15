@@ -31,6 +31,10 @@ function buildItems(pool, seg) {
     const ys = c % 2 === 0 ? evenYs : oddYs;
     return ys.map(y => ({ x, y, sizeX: 2, sizeY: 2 }));
   });
+  // A partial page must put its real photos in front of the viewer instead of
+  // filling the back of the sphere while showing placeholders in the centre.
+  coords.sort((a, b) => (Math.abs(a.x + 0.5) + Math.abs(a.y - 0.5) * 0.7)
+    - (Math.abs(b.x + 0.5) + Math.abs(b.y - 0.5) * 0.7));
 
   const totalSlots = coords.length;
   
@@ -157,7 +161,11 @@ export default function DomeGallery({
     return () => ro.disconnect();
   }, [fit, fitBasis, minRadius, maxRadius, padFactor, overlayBlurColor, grayscale, imageBorderRadius, openedImageBorderRadius]);
 
-  useEffect(() => { applyTransform(rotationRef.current.x, rotationRef.current.y); }, []);
+  useEffect(() => {
+    cancelAnimationFrame(inertiaRAF.current);
+    rotationRef.current = { x: 0, y: 0 };
+    applyTransform(0, 0);
+  }, [images]);
 
   const stopInertia = useCallback(() => {
     if (inertiaRAF.current) { cancelAnimationFrame(inertiaRAF.current); inertiaRAF.current = null; }

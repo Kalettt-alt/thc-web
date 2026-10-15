@@ -21,7 +21,7 @@ export function safeHexColor(value, fallback = '#A855F7') {
   return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
 }
 
-export const PROFILE_THEME_IDS = Object.freeze(['default', 'twc', 'pixel', 'club', 'editorial', 'aurora', 'terminal', 'estadio', 'vinilo', 'eclipse']);
+export const PROFILE_THEME_IDS = Object.freeze(['default', 'twc', 'pixel', 'club', 'editorial', 'aurora', 'terminal', 'vinilo', 'eclipse', 'prisma', 'orbita', 'circuito', 'lienzo', 'cromo']);
 
 export function safeProfileTheme(value) {
   return PROFILE_THEME_IDS.includes(value) ? value : 'default';

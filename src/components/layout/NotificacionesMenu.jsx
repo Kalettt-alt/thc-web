@@ -5,6 +5,7 @@ import { RUTAS } from '../../utils/rutas';
 import { Bell, CheckCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
+import { confirmProfileFriendship, emitProfileFriendsChange } from '../../utils/profileFriends';
 
 export default function NotificacionesMenu({ session, isOpen, onToggle }) {
   const [notificaciones, setNotificaciones] = useState([]);
@@ -45,12 +46,11 @@ export default function NotificacionesMenu({ session, isOpen, onToggle }) {
     if (pendiente.current) return;
     pendiente.current = true; setAccionPendiente(notificacion.id);
     try {
-      const query = supabase.from('amigos');
-      const resultado = aceptar
-        ? await query.update({ estado: 'aceptado' }).eq('user_id_1', notificacion.actor_id).eq('user_id_2', userId).eq('estado', 'pendiente').select('id')
-        : await query.delete().eq('user_id_1', notificacion.actor_id).eq('user_id_2', userId).eq('estado', 'pendiente').select('id');
+      const resultado = await supabase.rpc('thc_perfil_amistad_notificacion', { p_solicitud_id: notificacion.enlace_id, p_accion: aceptar ? 'aceptar' : 'rechazar' });
       if (resultado.error) throw resultado.error;
-      if (!resultado.data?.length) throw new Error('La solicitud ya no está disponible.');
+      const amistad = confirmProfileFriendship(resultado.data);
+      emitProfileFriendsChange([userId, notificacion.actor_id]);
+      if (aceptar ? amistad.estado !== 'friends' : amistad.estado !== 'none') throw new Error('La solicitud ya cambió. Revisa Amigos en tu perfil.');
       toast.success(aceptar ? 'Amistad aceptada.' : 'Solicitud rechazada.');
       try { await marcarLeida(notificacion.id); }
       catch { toast.error('Solicitud procesada; no se pudo actualizar la notificación.'); }

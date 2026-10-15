@@ -7,7 +7,7 @@ import { normalizePlayerList } from './utValidation';
 import { repairSquad, validateStartingSquad } from './squadUT';
 import ClubIdentityLogoUT from './ClubIdentityLogoUT';
 import { createOfflineMatch, practiceTeamSnapshot, teamSimulationMetrics } from './simulationUT';
-import { cancelOnlineQueue, getOnlineStatus, heartbeatOnlineQueue, joinOnlineQueue, ONLINE_POLL_MS } from './onlineUT';
+import { cancelOnlineQueue, getOnlineStatus, heartbeatOnlineQueue, joinOnlineQueue, updateOnlineTactics, ONLINE_POLL_MS } from './onlineUT';
 import MatchSimulationUT from './MatchSimulationUT';
 import { dismissOnlineMatch, readDismissedOnlineMatchId } from './onlineResultSeenUT';
 import './PlayUT.css';
@@ -83,7 +83,8 @@ export default function PlayUT({ onVolver, clubData, squadData, onOpenTeam }) {
 
   const acceptOnline = useCallback(payload => {
     if (!active.current) return;
-    if (['playing', 'finished'].includes(payload.status) && (!payload.match?.home || !payload.match?.away || !Array.isArray(payload.match.events) || Date.parse(payload.match.ends_at) - Date.parse(payload.match.started_at) !== 180000 || !Number.isInteger(payload.match.home_goals) || !Number.isInteger(payload.match.away_goals) || payload.match.home_goals < 0 || payload.match.home_goals > 6 || payload.match.away_goals < 0 || payload.match.away_goals > 6)) {
+    const expectedWall = ((payload.match?.simulation_version >= 3 ? 120 : 180) + (payload.match?.simulation_version >= 2 ? payload.match.halftime_seconds ?? 12 : 0)) * 1000;
+    if (['playing', 'finished'].includes(payload.status) && (!payload.match?.home || !payload.match?.away || !Array.isArray(payload.match.events) || Date.parse(payload.match.ends_at) - Date.parse(payload.match.started_at) !== expectedWall || !Number.isInteger(payload.match.home_goals) || !Number.isInteger(payload.match.away_goals) || payload.match.home_goals < 0 || payload.match.home_goals > 6 || payload.match.away_goals < 0 || payload.match.away_goals > 6)) {
       throw new Error('El servidor no pudo confirmar los datos del encuentro.');
     }
     const serverTime = Date.parse(payload.server_now);
@@ -116,7 +117,9 @@ export default function PlayUT({ onVolver, clubData, squadData, onOpenTeam }) {
   useEffect(() => {
     active.current = true;
     void poll();
-    const timer = setInterval(() => { void poll(); }, ONLINE_POLL_MS);
+    // Active fixtures refresh promptly; the waiting queue keeps its lower-frequency heartbeat.
+    let nextPoll = 0;
+    const timer = setInterval(() => { if (Date.now() >= nextPoll) { nextPoll = Date.now() + (liveState.current.status === 'playing' ? ONLINE_POLL_MS : 5000); void poll(); } }, 500);
     return () => {
       active.current = false;
       clearInterval(timer);
@@ -169,9 +172,16 @@ export default function PlayUT({ onVolver, clubData, squadData, onOpenTeam }) {
     const away = { ...opponent, nombre: opponent.name, abreviatura: opponent.name.slice(0, 3).toUpperCase(), logo_url: opponent.img };
     setPractice(createOfflineMatch(home, away, { seed: crypto.randomUUID(), startedAt: Date.now() }));
   };
+  const coachOnline = async command => {
+    if (operationLock.current || !liveState.current.match) throw new Error('Espera la confirmación del partido.');
+    operationLock.current = true;
+    operationVersion.current++;
+    try { acceptOnline(await updateOnlineTactics(supabase, { ...command, matchId: liveState.current.match.id })); }
+    finally { operationLock.current = false; }
+  };
 
   if (practice) return <MatchSimulationUT key={practice.id} match={practice} onVolver={() => setPractice(null)} onReplay={beginPractice} />;
-  if (online.match && ['playing', 'finished'].includes(online.status)) return <MatchSimulationUT key={online.match.id} match={online.match} online serverOffset={online.serverOffset} serverStatus={online.status} viewerId={userId} connectionError={onlineError} onVolver={() => void leave()} />;
+  if (online.match && ['playing', 'finished'].includes(online.status)) return <MatchSimulationUT key={online.match.id} match={online.match} online serverOffset={online.serverOffset} serverStatus={online.status} viewerId={userId} connectionError={onlineError} onCoachOnline={coachOnline} onVolver={() => void leave()} />;
 
   return <section className="ut-play" role="dialog" aria-modal="true" aria-label="Jugar Ultimate Team" onKeyDown={event => { if (event.key === 'Escape') void leave(); }}>
     <header className="ut-play__header"><button autoFocus type="button" onClick={() => void leave()} disabled={connecting}><ArrowLeft size={18} /> Regresar</button><span>THC ULTIMATE TEAM</span><div><i className={online.online_count === null ? 'is-unknown' : ''} /><strong>{online.online_count === null ? '—' : online.online_count}</strong> Jugadores activos</div></header>
@@ -186,13 +196,13 @@ export default function PlayUT({ onVolver, clubData, squadData, onOpenTeam }) {
             <button type="button" onClick={() => setOpponentIndex(index => (index + 1) % EQUIPOS_DATA.length)} aria-label="Siguiente rival" disabled={searching}><ChevronRight size={24} /></button>
           </div>
           <div className="ut-play__rival-dots" aria-label="Equipos disponibles">{EQUIPOS_DATA.map((team, index) => <button type="button" key={team.id} aria-label={`Elegir ${team.name}`} aria-pressed={index === opponentIndex} disabled={searching} onClick={() => setOpponentIndex(index)} />)}</div>
-          <footer><span>3 minutos · Sin cambios en tu club</span><button type="button" onClick={beginPractice} disabled={!canPlay || searching || connecting}>Jugar <ArrowRight size={18} /></button></footer>
+          <footer><span>Dos tiempos de 60 s · Práctica</span><button type="button" onClick={beginPractice} disabled={!canPlay || searching || connecting}>Jugar <ArrowRight size={18} /></button></footer>
         </motion.section>
         <motion.section className="ut-play__mode ut-play__mode--online" initial={{ opacity: 0, y: reduced ? 0 : 15 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: .12 }}>
           <div className="ut-play__mode-title"><span>02 / FRENTE A FRENTE</span><h2>ONLINE.</h2><p>Un rival real. Un partido simulado.</p></div>
           {searching ? <div className="ut-play__search" role="status"><div className="ut-play__search-rings" aria-hidden="true"><i /><i /><Users size={36} /></div><h3>{online.status === 'waiting' ? 'Buscando rival…' : 'Confirmando búsqueda…'}</h3><p>GRL {Math.max(0, (online.queue_grl ?? ownMetrics.grl) - 3)} — {Math.min(99, (online.queue_grl ?? ownMetrics.grl) + 3)}</p>{online.status === 'waiting' && <span>La búsqueda sigue mientras estás aquí.</span>}</div> : <div className="ut-play__online-art" aria-hidden="true"><span>VS</span><div><b>{ownMetrics.grl}</b><i /><b>?</b></div><span>GRL ±3</span></div>}
           {onlineError && <p className="ut-play__online-error" role="status">{onlineError}</p>}
-          <footer><span>{searching ? online.status === 'waiting' ? 'Esperando otro jugador' : 'Esperando confirmación' : '3 minutos · Diferencia máxima de 3 GRL'}</span>
+          <footer><span>{searching ? online.status === 'waiting' ? 'Esperando otro jugador' : 'Esperando confirmación' : '2 minutos · Diferencia máxima de 3 GRL'}</span>
             {searching ? <div className="ut-play__queue-actions">{online.status !== 'waiting' && <button type="button" disabled={connecting} onClick={() => void searchOnline()}>Reintentar</button>}<button type="button" disabled={connecting} className="ut-play__cancel" onClick={() => void cancelSearch()}><X size={16} />Cancelar</button></div> : <button type="button" onClick={() => void searchOnline()} disabled={!canPlay || connecting || onlineError === 'Online pendiente de activar.'}>{connecting ? 'Conectando…' : 'Buscar rival'}<ArrowRight size={18} /></button>}
           </footer>
         </motion.section>

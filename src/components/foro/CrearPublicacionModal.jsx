@@ -1,9 +1,12 @@
-import { useState, useRef } from 'react';
-import { X, Send, ImagePlus, Hash, Loader2, Zap, Check } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { X, Send, Hash, Loader2, Zap, Check } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { supabase } from '../../utils/supabase';
-import { ETIQUETAS_FORO, imagenSegura } from '../../utils/foro';
+import { ETIQUETAS_FORO } from '../../utils/foro';
+import { createForumDraft, disposeForumDraft, saveForumDraft } from '../../utils/forumMedia';
 import ForoDialog from './ForoDialog';
+import ForoImagePicker from './ForoImagePicker';
+import useForumAttachments from './useForumAttachments';
 import { useHomeMotion } from '../../utils/homeMotion';
 
 export default function CrearPublicacionModal({ isOpen, onClose, perfilActual, onPublicacionCreada }) {
@@ -11,45 +14,56 @@ export default function CrearPublicacionModal({ isOpen, onClose, perfilActual, o
   const [titulo, setTitulo] = useState('');
   const [contenido, setContenido] = useState('');
   const [etiqueta, setEtiqueta] = useState('Normal');
-  const [imagenUrl, setImagenUrl] = useState('');
-  const [imagenes, setImagenes] = useState([]);
   const [publicando, setPublicando] = useState(false);
   const envioRef = useRef(false);
+  const draftRef = useRef(null);
+  const mountedRef = useRef(true);
+  const { attachments, selecting, addFiles, remove, reset } = useForumAttachments();
+  const authorId = perfilActual?.id;
 
-  const agregarImagen = () => {
-    const url = imagenSegura(imagenUrl.trim());
-    if (!url) return toast.error('Introduce una dirección HTTPS válida para la imagen.');
-    if (imagenes.length >= 4) return toast.error('Puedes adjuntar hasta 4 imágenes.');
-    setImagenes(prev => [...new Set([...prev, url])]);
-    setImagenUrl('');
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (!envioRef.current) void disposeForumDraft(supabase, { draft: draftRef.current, table: 'foro_publicaciones', authorId });
+    };
+  }, [authorId]);
+
+  const cerrar = () => {
+    if (envioRef.current || selecting) return;
+    void disposeForumDraft(supabase, { draft: draftRef.current, table: 'foro_publicaciones', authorId });
+    draftRef.current = null;
+    reset();
+    onClose();
   };
 
   const publicar = async (event) => {
     event.preventDefault();
-    if (envioRef.current) return;
+    if (envioRef.current || selecting) return;
     if (!perfilActual?.id) return toast.error('No se pudo cargar tu perfil. Vuelve a intentarlo.');
     if (!titulo.trim() || !contenido.trim()) return toast.error('Completa el título y el mensaje.');
     envioRef.current = true;
     setPublicando(true);
     try {
-      const { data, error } = await supabase.from('foro_publicaciones').insert({
-        autor_id: perfilActual.id, titulo: titulo.trim(), contenido: contenido.trim(), etiqueta, imagenes,
-      }).select('*').single();
-      if (error) throw error;
+      if (!draftRef.current) draftRef.current = createForumDraft();
+      const data = await saveForumDraft(supabase, { draft: draftRef.current, table: 'foro_publicaciones', authorId,
+        values: { titulo: titulo.trim(), contenido: contenido.trim(), etiqueta }, attachments });
+      if (!mountedRef.current) return;
       onPublicacionCreada({ ...data, autor: perfilActual, comentarios_count: 0 });
-      setTitulo(''); setContenido(''); setImagenes([]); setImagenUrl('');
+      setTitulo(''); setContenido(''); reset(); draftRef.current = null;
       toast.success('Tu debate fue publicado.');
       onClose();
-    } catch {
-      toast.error('No se pudo publicar. Tu borrador sigue aquí; inténtalo de nuevo.');
+    } catch (error) {
+      if (mountedRef.current) toast.error(error.message || 'No se pudo publicar. Tu borrador sigue aquí; inténtalo de nuevo.');
     } finally {
       envioRef.current = false;
-      setPublicando(false);
+      if (mountedRef.current) setPublicando(false);
+      else void disposeForumDraft(supabase, { draft: draftRef.current, table: 'foro_publicaciones', authorId });
     }
   };
 
   return (
-    <ForoDialog isOpen={isOpen} onClose={onClose} titleId="crear-hilo-titulo" busy={publicando}>
+    <ForoDialog isOpen={isOpen} onClose={cerrar} titleId="crear-hilo-titulo" busy={publicando || selecting}>
       <form onSubmit={publicar} className="foro-compose" data-motion={motionEnabled ? 'on' : 'off'}>
         <div className="foro-compose-header">
           <div>
@@ -57,7 +71,7 @@ export default function CrearPublicacionModal({ isOpen, onClose, perfilActual, o
             <h2 id="crear-hilo-titulo">Crear <span>debate.</span></h2>
             <p>Abre una conversación con la comunidad THC.</p>
           </div>
-          <button type="button" aria-label="Cerrar formulario" disabled={publicando} onClick={onClose} className="foro-compose-close"><X size={21} /></button>
+          <button type="button" aria-label="Cerrar formulario" disabled={publicando || selecting} onClick={cerrar} className="foro-compose-close"><X size={21} /></button>
         </div>
         <div className="foro-dialog-content foro-compose-body">
           <fieldset disabled={publicando}>
@@ -78,18 +92,12 @@ export default function CrearPublicacionModal({ isOpen, onClose, perfilActual, o
             <p className="foro-compose-help"><span>Respeta a la comunidad y mantén el debate en su tema.</span></p>
           </div>
           <div className="foro-compose-field">
-            <label htmlFor="foro-imagen"><ImagePlus size={18} aria-hidden="true" />Imágenes <span>Opcional</span></label>
-            <div className="foro-compose-image-input">
-              <input id="foro-imagen" type="url" disabled={publicando} value={imagenUrl} onChange={e => setImagenUrl(e.target.value)} placeholder="https://..." className="foro-compose-input" />
-              <button type="button" onClick={agregarImagen} disabled={publicando || !imagenUrl.trim()}><ImagePlus size={18} /> Añadir</button>
-            </div>
-            <p className="foro-compose-help"><span>Usa un enlace HTTPS. Hasta cuatro imágenes.</span><span>{imagenes.length} / 4</span></p>
-            {imagenes.length > 0 && <div className="foro-compose-images">{imagenes.map(url => <div key={url}><img src={url} alt="Vista previa del adjunto" /><button type="button" aria-label="Quitar imagen" disabled={publicando} onClick={() => setImagenes(prev => prev.filter(img => img !== url))}><X size={17} /></button></div>)}</div>}
+            <ForoImagePicker attachments={attachments} onAddFiles={addFiles} onRemove={remove} disabled={publicando} selecting={selecting} />
           </div>
         </div>
         <div className="foro-compose-footer">
-          <button type="button" disabled={publicando} onClick={onClose}>Cancelar</button>
-          <button type="submit" disabled={publicando || !titulo.trim() || !contenido.trim()} className="foro-primary">{publicando ? <Loader2 size={18} className="foro-compose-spinner" /> : <Send size={18} />} {publicando ? 'Publicando...' : 'Publicar debate'}</button>
+          <button type="button" disabled={publicando || selecting} onClick={cerrar}>Cancelar</button>
+          <button type="submit" disabled={publicando || selecting || !titulo.trim() || !contenido.trim()} className="foro-primary">{publicando ? <Loader2 size={18} className="foro-compose-spinner" /> : <Send size={18} />} {publicando ? 'Publicando...' : 'Publicar debate'}</button>
         </div>
       </form>
     </ForoDialog>

@@ -2,15 +2,17 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { playerPositionPenalty } from '../src/pages/UltimateTeam/squadUT.js';
+import { arrangeSquad, playerPositionPenalty, SQUAD_FORMATIONS } from '../src/pages/UltimateTeam/squadUT.js';
+import { JUGADORES_BASE } from '../src/pages/UltimateTeam/data/jugadoresBase.js';
 
-const runtime = process.argv[2] || '.qa/sql-online-runtime/node_modules/@electric-sql/pglite/dist/index.js';
+const runtime = process.argv[2] || '.qa/sql-muro-runtime/node_modules/@electric-sql/pglite/dist/index.js';
 const { PGlite } = await import(pathToFileURL(resolve(runtime)).href);
 const db = new PGlite();
 const bundle = await readFile(new URL('../ComandosSQL_ActualizacionUT.txt', import.meta.url), 'utf8');
 const base = await readFile(new URL('../supabase/ultimate_team_cartas.sql', import.meta.url), 'utf8');
 const existingCardTables = base.slice(base.indexOf('create table if not exists public.ut_cartas ('), base.indexOf('create table if not exists thc_private.ut_aperturas ('));
-const users = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222', '33333333-3333-4333-8333-333333333333'];
+const users = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222', '33333333-3333-4333-8333-333333333333',
+  ...Array.from({length: 4}, (_,index) => `00000000-0000-4000-8000-${String(index+4).padStart(12,'0')}`)];
 const starter = { formacion: '4-3-3', titulares: ['p10', 'p11', 'p9', 'p7', 'p8', 'p15', 'p5', 'p2', 'p3', 'p4', 'p1'].map(id => ({ id, grl: 99, pos: 'ST', stamina: 999 })), suplentes: [], reservas: [] };
 const query = async (sql, args = []) => (await db.query(sql, args)).rows;
 const role = async (name = null, user = '') => {
@@ -70,7 +72,13 @@ try {
     assert.equal((await query('select count(*)::int as n from public.ut_sobres_inventario'))[0].n, 1);
     assert.equal((await query('select count(*)::int as n from public."PlaylistUT"'))[0].n, 2);
     assert.equal((await query('select count(*)::int as n from thc_private.ut_bonus_claims'))[0].n, 2);
-    assert.equal((await query('select count(*)::int as n from thc_private.ut_jugadores_base'))[0].n, 23);
+    assert.equal((await query('select count(*)::int as n from thc_private.ut_jugadores_base'))[0].n, 67);
+    assert.equal((await query('select count(*)::int as n from thc_private.ut_inicial_catalogo'))[0].n, 67);
+    const legacy = await query('select cartas,legacy,catalog_version from thc_private.ut_inicial_entregas order by user_id');
+    assert.equal(legacy.length, 2);
+    for (const receipt of legacy) {
+      assert.equal(receipt.legacy, true); assert.equal(receipt.catalog_version, 1); assert.deepEqual(receipt.cartas, JUGADORES_BASE);
+    }
   });
   await check('un fallo posterior revierte el TXT completo de forma atómica', async () => {
     await db.exec('drop index public.ut_online_cola_grl');
@@ -139,11 +147,23 @@ try {
     await save(starter); assert.equal((await rpc('thc_ut_online_buscar', [crypto.randomUUID()])).status, 'waiting');
     await role('authenticated', users[1]); await save(starter);
     const match = await rpc('thc_ut_online_buscar', [crypto.randomUUID()]); assert.equal(match.status, 'playing'); matchId = match.match.id;
+    assert.equal(match.match.simulation_version, 3); assert.equal(match.match.duration_seconds, 120); assert.equal(match.match.halftime_seconds, 12);
+    assert.equal(Date.parse(match.match.ends_at) - Date.parse(match.match.started_at), 132000);
     await reject(() => rpc('thc_ut_reset'), '55000'); assert.equal((await query('select monedas from public.perfiles_ut'))[0].monedas, 987);
     await role('authenticated', users[0]); await reject(() => rpc('thc_ut_reset'), '55000'); assert.equal((await query('select * from public.equipos_ut')).length, 1);
   });
+  await check('reejecutar TXT con partido v3 activo conserva snapshots, recibos y relojes', async () => {
+    await role(null);
+    const games = await query('select * from public.ut_online_partidas order by id');
+    const receipts = await query('select * from thc_private.ut_inicial_entregas order by user_id');
+    const squads = await query('select * from public.plantillas_ut order by user_id');
+    await db.exec(bundle);
+    assert.deepEqual(await query('select * from public.ut_online_partidas order by id'), games);
+    assert.deepEqual(await query('select * from thc_private.ut_inicial_entregas order by user_id'), receipts);
+    assert.deepEqual(await query('select * from public.plantillas_ut order by user_id'), squads);
+  });
   await check('reset tras finalizar conserva resultado y energía autoritativos del partido', async () => {
-    await role(null); await query("update public.ut_online_partidas set started_at=now()-interval '181 seconds',ends_at=now()-interval '1 second' where id=$1", [matchId]);
+    await role(null); await query("update public.ut_online_partidas set started_at=now()-interval '133 seconds',ends_at=now()-interval '1 second' where id=$1", [matchId]);
     await role('authenticated', users[0]); assert.equal(await rpc('thc_ut_reset'), users[0]);
     assert.equal((await query('select id from public.ut_online_partidas'))[0].id, matchId);
     assert.equal((await query('select * from public.ut_online_energia')).length, 11);
@@ -176,6 +196,74 @@ try {
     const manual = { ...starter, titulares: Array.from({ length: 11 }, (_, i) => ({ id: `p${i + 1}` })) };
     const saved = await save({ ...manual, version_posiciones: 999 }); assert.equal(saved.version_posiciones, 1);
     assert.deepEqual(saved.titulares.map(p => p.id), manual.titulares.map(p => p.id));
+  });
+  await check('nuevas cuentas reciben23 cartas distintas, equipo equilibrado y recibo estable sinreroll', async () => {
+    for (const user of users.slice(3,5)) {
+      await role('authenticated',user); await rpc('thc_ut_initialize');
+      await query("insert into public.equipos_ut(user_id,nombre,abreviatura,liga,estadio) values($1,'Club nuevo','NEW','Argentina','Arena')", [user]);
+      assert.deepEqual(await rpc('thc_ut_cartas_iniciales'), []);
+      const initial = await rpc('thc_ut_abrir_sobre_inicial');
+      assert.equal(initial.legacy, false); assert.equal(initial.pool_size, 67); assert.equal(initial.version, 4);
+      assert.equal(initial.cartas.length, 23); assert.equal(new Set(initial.cartas.map(card=>card.id)).size, 23);
+      assert.ok(initial.cartas.every(card=>/^p([1-9]|[1-5][0-9]|6[0-7])$/.test(card.id) && card.grl < 99));
+      const positionCount = position => initial.cartas.filter(card=>card.pos===position).length;
+      for (const [position,count] of [['GK',2],['CB',2],['LB',1],['RB',1],['CM',2],['CAM',1],['LW',1],['RW',1],['ST',1]]) {
+        assert.ok(positionCount(position)>=count, `${position}: requiere${count}`);
+      }
+      assert.deepEqual(await rpc('thc_ut_abrir_sobre_inicial'), initial);
+      const natural = arrangeSquad({formacion:'4-3-3',titulares:[],suplentes:[],reservas:initial.cartas},'4-3-3',{naturalOnly:true});
+      assert.ok(natural.titulares.every((card,index)=>card?.pos===SQUAD_FORMATIONS['4-3-3'][index][0]));
+      const fake = {...natural, titulares:natural.titulares.map(card=>({...card,grl:99,stamina:999,nombre:'Inventado'}))};
+      const saved = await save(fake); assert.deepEqual(saved.titulares, natural.titulares);
+      const snapshot = (await rpc('thc_ut_online_estado')).team;
+      assert.equal(snapshot.roster.length,18); assert.ok(snapshot.roster.every(card=>card.stamina===100 && card.base_grl<99 && card.nombre!=='Inventado'));
+      const own = structuredClone(initial.cartas); await rpc('thc_ut_reset'); await rpc('thc_ut_initialize');
+      await query("insert into public.equipos_ut(user_id,nombre,abreviatura,liga,estadio) values($1,'Club recuperado','NEW','Argentina','Arena')", [user]);
+      assert.deepEqual((await rpc('thc_ut_abrir_sobre_inicial')).cartas,own);
+    }
+  });
+  await check('recibo nuevo restringe p1…p67 a lo efectivamente recibido y mantienehelpersprivados', async () => {
+    await role('authenticated',users[3]); const cards = await rpc('thc_ut_cartas_iniciales');
+    const ids = new Set(cards.map(card=>card.id));
+    const absent = Array.from({length:67},(_,index)=>`p${index+1}`).find(id=>!ids.has(id));
+    const squad=arrangeSquad({formacion:'4-3-3',titulares:[],suplentes:[],reservas:cards},'4-3-3',{naturalOnly:true});
+    const forged={...squad,titulares:[{id:absent},...squad.titulares.slice(1)]};
+    await reject(()=>save(forged),'42501');
+    await reject(()=>query('select * from thc_private.ut_inicial_entregas'),'42501');
+    await role('authenticated',users[6]); await reject(()=>rpc('thc_ut_abrir_sobre_inicial'),'42501');
+    await role('anon'); await reject(()=>rpc('thc_ut_cartas_iniciales'),'42501');
+  });
+  await check('Plus recibido conserva su89GRL oficial al guardar y entrar aOnline; skeleton no altera rarezas', async () => {
+    // A deterministic builder fixture exercises a possible rare draw without a flaky probability assertion.
+    await role('authenticated',users[5]); await rpc('thc_ut_initialize');
+    await query("insert into public.equipos_ut(user_id,nombre,abreviatura,liga,estadio) values($1,'Club Plus','PLS','Argentina','Arena')", [users[5]]);
+    await role(null);
+    const seed='00000000-0000-4000-8000-000000000067';
+    const qualities=['plus',...Array(22).fill('bronce')];
+    const cards=(await query('select thc_private.ut_inicial_build($1::uuid,$2::text[]) as cards',[seed,qualities]))[0].cards;
+    assert.equal(cards.length,23); assert.equal(new Set(cards.map(card=>card.id)).size,23);
+    assert.equal(cards.filter(card=>card.color==='plus').length,1); assert.equal(cards.filter(card=>card.color==='bronce').length,22);
+    const plus=cards.find(card=>card.color==='plus'); assert.equal(plus.id,'p67'); assert.equal(plus.grl,89);
+    await query(`insert into thc_private.ut_inicial_entregas(user_id,jugadores,legacy,semilla,cartas,catalog_version,calidades)
+      values($1,$2::text[],false,$3::uuid,$4::jsonb,4,$5::text[])`,[users[5],cards.map(card=>card.id),seed,JSON.stringify(cards),qualities]);
+    await role('authenticated',users[5]); const receipt=await rpc('thc_ut_abrir_sobre_inicial'); assert.deepEqual(receipt.cartas,cards);
+    const squad=arrangeSquad({formacion:'4-3-3',titulares:[],suplentes:[],reservas:cards},'4-3-3',{naturalOnly:true});
+    assert.equal(squad.titulares[1].id,'p67');
+    const saved=await save({...squad,titulares:squad.titulares.map(card=>({...card,grl:99,color:'ultimate',nombre:'Falso'}))});
+    assert.equal(saved.titulares[1].grl,89); assert.equal(saved.titulares[1].color,'plus'); assert.equal(saved.titulares[1].nombre,plus.nombre);
+    const team=(await rpc('thc_ut_online_estado')).team;
+    assert.equal(team.titulares[1].id,'p67'); assert.equal(team.titulares[1].base_grl,89); assert.equal(team.titulares[1].grl,89);
+    assert.equal(team.titulares[1].color,'plus'); assert.equal(team.titulares[1].stamina,100);
+  });
+  await check('reejecutar instalación trasentregas nuevas conserva sus estadísticas, recibos y plantillas', async () => {
+    await role(null);
+    const receipts = await query('select * from thc_private.ut_inicial_entregas order by user_id');
+    const squads = await query('select * from public.plantillas_ut order by user_id');
+    const wallets = await query('select * from public.perfiles_ut order by user_id');
+    await db.exec(bundle); await db.exec(bundle);
+    assert.deepEqual(await query('select * from thc_private.ut_inicial_entregas order by user_id'),receipts);
+    assert.deepEqual(await query('select * from public.plantillas_ut order by user_id'),squads);
+    assert.deepEqual(await query('select * from public.perfiles_ut order by user_id'),wallets);
   });
   console.log(`${checks} escenarios del TXT completo UT aprobados.`);
 } catch (error) {

@@ -6,7 +6,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronRight, ArrowLeft, ShieldCheck, Zap } from 'lucide-react';
 import { supabase } from '../../utils/supabase';
 
-import { JUGADORES_BASE } from './data/jugadoresBase';
 import SobresUT from './SobresUT';
 import MenuUT from './MenuUT';
 import TeamUT from './TeamUT';
@@ -15,6 +14,7 @@ export default function InstruccionUT({ onComplete, clubData = null }) {
   const [dialogoIdx, setDialogoIdx] = useState(0);
   const [showSobres, setShowSobres] = useState(false);
   const [isBuilding, setIsBuilding] = useState(false);
+  const [receivedPlayers, setReceivedPlayers] = useState([]);
   const saveLock = useRef(false);
   const [bgMode, setBgMode] = useState('menu'); 
   const [tutorialPlantilla, setTutorialPlantilla] = useState({ titulares: [], suplentes: [], reservas: [], formacion: '4-3-3' });
@@ -39,7 +39,8 @@ export default function InstruccionUT({ onComplete, clubData = null }) {
     }
   };
 
-  const handlePackOpened = () => {
+  const handlePackOpened = players => {
+    setReceivedPlayers(players);
     setShowSobres(false);
     handleNextDialogo(); 
   };
@@ -53,7 +54,8 @@ export default function InstruccionUT({ onComplete, clubData = null }) {
       const { data: { user }, error: authError } = await supabase.auth.getUser();
       if (authError || !user) throw new Error('Tu sesión expiró. Inicia sesión de nuevo.');
 
-      const { titulares, suplentes, reservas } = buildStarterSquad(JUGADORES_BASE);
+      if (receivedPlayers.length !== 23) throw new Error('Primero confirma la apertura de tu sobre inicial.');
+      const { titulares, suplentes, reservas } = buildStarterSquad(receivedPlayers);
 
       const nuevaPlantilla = { 
         user_id: user.id,

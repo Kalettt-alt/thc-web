@@ -115,7 +115,7 @@ try {
     const match = value.match; gameId = match.id;
     assert.equal(value.team.id, users[2]); assert.equal(value.team.stamina, 100);
     assert.equal(match.home.id, users[0]); assert.equal(match.away.id, users[2]); assert.equal(Math.abs(match.home.grl - match.away.grl), 3);
-    assert.equal(Date.parse(match.ends_at) - Date.parse(match.started_at), 180000);
+    assert.equal(Date.parse(match.ends_at) - Date.parse(match.started_at), 192000);
     assert.equal(match.home_goals, 0); assert.equal(match.away_goals, 0); assert.ok(match.events.every(e => e.second === 0));
   });
   await check('los dos participantes reciben mismo timeline y no pueden leer eventos futuros directamente', async () => {
@@ -136,7 +136,7 @@ try {
     await reject(() => query('delete from public.ut_online_sesiones'), '42501');
   });
   await check('timeline visible y marcador coinciden con el reloj del servidor', async () => {
-    await role(null); await query("update public.ut_online_partidas set started_at=now()-interval '60 seconds',ends_at=now()+interval '120 seconds' where id=$1", [gameId]);
+    await role(null); await query("update public.ut_online_partidas set started_at=now()-interval '60 seconds',ends_at=now()+interval '132 seconds' where id=$1", [gameId]);
     await role('authenticated', users[0]); const value = await state();
     assert.ok(value.match.events.every(e => e.second <= 60));
     assert.equal(value.match.home_goals, value.match.events.filter(e => e.side === 'home' && e.type === 'goal').length);
@@ -155,7 +155,7 @@ try {
     await role('authenticated', users[1]); assert.equal((await state()).status, 'idle'); assert.equal((await join(req)).status, 'idle');
   });
   await check('al finalizar se persiste resultado único y fatiga canonical para ambos equipos', async () => {
-    await role(null); await query("update public.ut_online_partidas set started_at=now()-interval '181 seconds',ends_at=now()-interval '1 second' where id=$1", [gameId]);
+    await role(null); await query("update public.ut_online_partidas set started_at=now()-interval '193 seconds',ends_at=now()-interval '1 second' where id=$1", [gameId]);
     await role('authenticated', users[0]); const value = await state(); assert.equal(value.status, 'finished');
     finishEnergy = await query('select * from public.ut_online_energia order by player_id'); assert.equal(finishEnergy.length, 11);
     assert.ok(value.team.stamina < 100);
@@ -233,7 +233,7 @@ try {
     await reject(() => query('select events from public.ut_online_partidas'), '42501');
     await reject(() => query('select thc_private.ut_online_cleanup()'), '42501');
     await role(null); const configs = await query("select proconfig from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'thc_ut_online_%'");
-    assert.equal(configs.length, 4); assert.ok(configs.every(row => row.proconfig.includes('search_path=""')));
+    assert.equal(configs.length, 5); assert.ok(configs.every(row => row.proconfig.includes('search_path=""')));
   });
   console.log(`${checks} escenarios SQL Online UT aprobados.`);
 } catch (error) {

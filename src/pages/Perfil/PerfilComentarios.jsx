@@ -132,14 +132,14 @@ export default function PerfilComentarios({ perfilId, session }) {
 
   return (
                 <motion.div key={c.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }} className="theme-panel p-6 flex gap-4 md:gap-6 group">
-                  <Link to={`${RUTAS.PERFIL}/${encodeURIComponent(c.autor?.discord_nombre || '')}`} className="shrink-0 w-12 h-12 md:w-14 md:h-14 theme-avatar-container overflow-hidden bg-[#111]" style={{ borderColor: rango.color }}>
+                  <Link to={`${RUTAS.PERFIL}/${encodeURIComponent(c.autor_id)}`} className="shrink-0 w-12 h-12 md:w-14 md:h-14 theme-avatar-container overflow-hidden bg-[#111]" style={{ borderColor: rango.color }}>
                     <img loading="lazy" src={c.autor?.avatar_url || '/imagenes/LogoTHC.png'} alt="avatar" className="w-full h-full object-cover" />
                   </Link>
 
                   <div className="flex flex-col flex-1 min-w-0 justify-center">
                     <div className="flex justify-between items-start mb-2">
                       <div className="flex flex-col md:flex-row md:items-center gap-1 md:gap-3">
-                        <Link to={`${RUTAS.PERFIL}/${encodeURIComponent(c.autor?.discord_nombre || '')}`} className="font-black text-sm md:text-base uppercase tracking-tight hover:opacity-80 transition-opacity" style={{ color: rango.color }}>
+                        <Link to={`${RUTAS.PERFIL}/${encodeURIComponent(c.autor_id)}`} className="font-black text-sm md:text-base uppercase tracking-tight hover:opacity-80 transition-opacity" style={{ color: rango.color }}>
                           {c.autor?.apodo || c.autor?.discord_nombre}
                         </Link>
                         <span className="text-[#555] text-[9px] font-black uppercase flex items-center gap-1 mt-1 md:mt-0">

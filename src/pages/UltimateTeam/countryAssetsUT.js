@@ -1,0 +1,23 @@
+// Web derivatives of the supplied flags. Originals remain in Paises/.
+export const COUNTRY_ASSETS_UT = Object.freeze({
+  PE: new URL('./Paises/web/Peru.webp', import.meta.url).href,
+  AR: new URL('./Paises/web/Argentina.webp', import.meta.url).href,
+  UY: new URL('./Paises/web/Uruguay.webp', import.meta.url).href,
+  BO: new URL('./Paises/web/Bolivia.webp', import.meta.url).href,
+  CO: new URL('./Paises/web/Colombia.webp', import.meta.url).href,
+  BR: new URL('./Paises/web/Brasil.webp', import.meta.url).href,
+  ES: new URL('./Paises/web/Espana.webp', import.meta.url).href,
+  EN: new URL('./Paises/web/Inglaterra.webp', import.meta.url).href,
+  EC: new URL('./Paises/web/Ecuador.webp', import.meta.url).href,
+  PY: new URL('./Paises/web/Paraguay.webp', import.meta.url).href,
+  VE: new URL('./Paises/web/Venezuela.webp', import.meta.url).href,
+  IT: new URL('./Paises/web/Italia.webp', import.meta.url).href,
+  FR: new URL('./Paises/web/Francia.webp', import.meta.url).href,
+  US: new URL('./Paises/web/EEUU.webp', import.meta.url).href,
+  CA: new URL('./Paises/web/Canada.webp', import.meta.url).href,
+  FO: new URL('./Paises/web/Feroe.webp', import.meta.url).href,
+  VA: new URL('./Paises/web/Vaticano.webp', import.meta.url).href,
+  RU: new URL('./Paises/web/Rusia.webp', import.meta.url).href,
+  JP: new URL('./Paises/web/Japon.webp', import.meta.url).href,
+  SM: new URL('./Paises/web/SanMarino.webp', import.meta.url).href,
+});

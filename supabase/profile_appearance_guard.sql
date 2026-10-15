@@ -1,6 +1,6 @@
--- THC · Perfiles VIP, 9 de octubre de 2026.
+-- THC · Perfiles VIP y VIP Trueno, 12 de octubre de 2026.
 -- Ejecuta este archivo completo en el SQL Editor de Supabase.
--- Admite diez estilos. Solo el dueño con nivel_rol >= 10 puede personalizar el tema/color.
+-- Admite catorce estilos: VIP >= 10; Vinilo/Eclipse y cinco nuevos requieren VIP Trueno >= 15.
 -- Los datos normales del perfil, las políticas RLS existentes y los sobres se conservan.
 -- Las operaciones de administración desde SQL Editor/service_role siguen disponibles.
 -- Sustituye el parche anterior de apariencia; se puede ejecutar más de una vez.
@@ -27,7 +27,7 @@ begin
   end loop;
   if pg_catalog.to_regprocedure('public.thc_profile_appearance_guard()') is not null then
     select pg_catalog.obj_description(pg_catalog.to_regprocedure('public.thc_profile_appearance_guard()'), 'pg_proc') into current_marker;
-    if current_marker is null or current_marker not in ('THC profile appearance guard v1: isolated invoker validation; existing RLS and pack balances are preserved.', 'THC profile appearance guard v2: ten themes, owner VIP 10; ordinary edits, existing RLS and pack balances preserved.') then
+    if current_marker is null or current_marker not in ('THC profile appearance guard v1: isolated invoker validation; existing RLS and pack balances are preserved.', 'THC profile appearance guard v2: ten themes, owner VIP 10; ordinary edits, existing RLS and pack balances preserved.', 'THC profile appearance guard v3: fourteen themes, VIP 10 and Trueno 15; ordinary edits, identity and pack balances preserved.') then
       raise exception 'Ya existe una función thc_profile_appearance_guard ajena a este parche. Revísala antes de continuar';
     end if;
   end if;
@@ -43,7 +43,7 @@ begin
   where conrelid = 'public.perfiles'::regclass and contype = 'c'
     and pg_catalog.pg_get_constraintdef(oid) ~* '(tema_perfil|color_pixel|avatar_scale|avatar_pos_x|avatar_pos_y|banner_pos_y)';
   if constraints_found is not null then
-    raise notice 'Hay CHECK existentes que siguen vigentes. Verifica que admitan los diez temas y los rangos del formulario: %', constraints_found;
+    raise notice 'Hay CHECK existentes que siguen vigentes. Verifica que admitan los catorce temas y los rangos del formulario: %', constraints_found;
   end if;
 end;
 $preflight$;
@@ -94,7 +94,7 @@ begin
     end if;
   end if;
 
-  if theme_changed and (new.tema_perfil is null or new.tema_perfil <> all(array['default', 'twc', 'pixel', 'club', 'editorial', 'aurora', 'terminal', 'estadio', 'vinilo', 'eclipse'])) then
+  if theme_changed and (new.tema_perfil is null or new.tema_perfil <> all(array['default', 'twc', 'pixel', 'club', 'editorial', 'aurora', 'terminal', 'vinilo', 'eclipse', 'prisma', 'orbita', 'circuito', 'lienzo', 'cromo'])) then
     raise exception 'Elige un estilo de la colección THC' using errcode = '22023', detail = 'PROFILE_INVALID_THEME';
   end if;
   if color_changed and (new.color_pixel is null or new.color_pixel !~ '^#[0-9A-Fa-f]{6}$') then
@@ -123,16 +123,24 @@ begin
     end if;
   end if;
 
+  if web_request and theme_changed and new.tema_perfil = any(array['vinilo', 'eclipse', 'prisma', 'orbita', 'circuito', 'lienzo', 'cromo'])
+    and (tg_op = 'INSERT' or coalesce(old.nivel_rol, 0) < 15) then
+    raise exception 'Este estilo requiere VIP Trueno (nivel 15 o superior)' using errcode = '42501', detail = 'PROFILE_TRUENO_REQUIRED';
+  end if;
+
   return new;
 end;
 $guard$;
 
-comment on function public.thc_profile_appearance_guard() is 'THC profile appearance guard v2: ten themes, owner VIP 10; ordinary edits, existing RLS and pack balances preserved.';
+comment on function public.thc_profile_appearance_guard() is 'THC profile appearance guard v3: fourteen themes, VIP 10 and Trueno 15; ordinary edits, identity and pack balances preserved.';
 revoke all on function public.thc_profile_appearance_guard() from public, anon, authenticated;
 
 drop trigger if exists thc_profile_appearance_guard on public.perfiles;
 create trigger thc_profile_appearance_guard before insert or update on public.perfiles
 for each row execute function public.thc_profile_appearance_guard();
+
+-- Única actualización de perfiles: se retira Estadio. Ningún nombre, ID, rol o saldo se modifica.
+update public.perfiles set tema_perfil = 'default' where tema_perfil = 'estadio';
 
 commit;
 

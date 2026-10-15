@@ -2,13 +2,15 @@ import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../../utils/supabase';
 import { getLimites } from '../../utils/perfilLimites';
 import { ArrowLeft, Save, UploadCloud, UserRound, Image as ImageIcon, Music, Palette, LayoutGrid, RotateCcw, Eye, Check } from 'lucide-react';
-import { motion, MotionConfig, useReducedMotion } from 'framer-motion';
+import { motion, MotionConfig } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { safeHexColor, validateImageFile } from '../../utils/media';
-import { canPersonalizeProfile, getProfileTheme, getProfileThemeStyle, saveProfileTheme } from '../../utils/profileThemes';
+import { canPersonalizeProfile, canUseProfileTheme, getAvailableThemes, getProfileTheme, getProfileThemeStyle, saveProfileTheme } from '../../utils/profileThemes';
 import { createProfileSettings, profileNicknameCooldown, profileSettingsUpdates, profileImageUrl, PROFILE_POSITIONS, PROFILE_WIDGETS, spotifyTrack } from '../../utils/profileSettings';
 import { withAlbumTimeout } from '../../utils/albumAsync';
-import { useHomeMotion } from '../../utils/homeMotion';
+import { useProfileEffects } from './useProfileEffects';
+import ProfileEffectsControl from './ProfileEffectsControl';
+import ProfileAmbient from './ProfileAmbient';
 import PerfilThemePicker from './PerfilThemePicker';
 import './PerfilThemes.css';
 import './PerfilEdit.css';
@@ -33,11 +35,11 @@ export default function PerfilEdit({ perfil, session, onBack, onUpdate }) {
   const canCustomize = canPersonalizeProfile({ userId: session?.user?.id, profileId: perfil.id, level: perfil.nivel_rol });
   const pickerVisible = selectorAbierto && canCustomize;
   const visiblePreview = pickerVisible ? preview : null;
-  const theme = getProfileTheme(visiblePreview?.tema_perfil ?? perfil.tema_perfil, visiblePreview?.color_pixel ?? perfil.color_pixel);
+  const requestedTheme = visiblePreview?.tema_perfil ?? perfil.tema_perfil;
+  const theme = getProfileTheme(canUseProfileTheme(requestedTheme, perfil.nivel_rol) ? requestedTheme : 'default', visiblePreview?.color_pixel ?? perfil.color_pixel);
   const color = safeHexColor(visiblePreview?.color_pixel ?? perfil.color_pixel);
-  const { motionEnabled } = useHomeMotion();
-  const reducedMotion = useReducedMotion();
-  const animate = motionEnabled && !reducedMotion;
+  const { preference, effectsMode, setPreference } = useProfileEffects();
+  const animate = effectsMode === 'full';
   const dirty = JSON.stringify(form) !== JSON.stringify(baseline);
   const change = (key, value) => { setForm(previous => ({ ...previous, [key]: value })); setError(''); };
   const song = spotifyTrack(form.cancion_url);
@@ -125,8 +127,9 @@ export default function PerfilEdit({ perfil, session, onBack, onUpdate }) {
     event.currentTarget.querySelectorAll('[role="tab"]')[next]?.focus();
   }
 
-  return <MotionConfig reducedMotion={animate ? 'user' : 'always'}>
-    <div className={`edit-master-container ${theme.className}`} data-profile-theme={theme.id} data-motion={animate ? 'on' : 'off'} style={getProfileThemeStyle(theme.id, color)}>
+  return <MotionConfig reducedMotion={animate ? 'never' : 'always'}>
+    <div className={`edit-master-container ${theme.className}`} data-profile-theme={theme.id} data-effects={effectsMode} data-motion={animate ? 'on' : 'off'} style={getProfileThemeStyle(theme.id, color)}>
+      {theme.animated && <ProfileAmbient themeId={theme.id} effectsMode={effectsMode} />}
       <header className="profile-edit-header" inert={pickerVisible}>
         <button type="button" className="profile-edit-back" onClick={onBack} disabled={Boolean(busy)}><ArrowLeft size={19} /><span>Volver</span></button>
         <div className="profile-edit-title"><h1>Tu perfil<span>.</span></h1><p>{dirty ? 'Cambios sin guardar' : 'Todo en su lugar'}</p></div>
@@ -143,7 +146,7 @@ export default function PerfilEdit({ perfil, session, onBack, onUpdate }) {
               <p className="profile-edit-note">{cooldownDias > 0 ? `Puedes cambiarlo en ${cooldownDias} ${cooldownDias === 1 ? 'día' : 'días'}.` : `Un cambio cada ${limites.apodoDias} días.`}</p>
               <fieldset className="profile-edit-position"><legend>Posición</legend><div>{PROFILE_POSITIONS.map(position => <button type="button" key={position} aria-pressed={form.posicion === position} onClick={() => change('posicion', position)} disabled={Boolean(busy)}>{position === 'Cualquiera' ? 'Libre' : position}</button>)}</div></fieldset>
               <label className="profile-edit-field" htmlFor="profile-bio"><span>Tu estado <small>{form.bio.length}/{limites.bio}</small></span><textarea id="profile-bio" className="theme-input" rows={5} maxLength={limites.bio} value={form.bio} onChange={event => change('bio', event.target.value)} disabled={Boolean(busy)} placeholder="Algo que diga quién eres…" /></label>
-              {canCustomize && <button type="button" className="profile-edit-style-card" onClick={() => setSelectorAbierto(true)} disabled={Boolean(busy)}><Palette size={23} /><span><strong>{theme.name}</strong><small>Elegir entre 10 estilos</small></span><span aria-hidden="true">↗</span></button>}
+              {canCustomize && <button type="button" className="profile-edit-style-card" onClick={() => setSelectorAbierto(true)} disabled={Boolean(busy)}><Palette size={23} /><span><strong>{theme.name}</strong><small>{getAvailableThemes(perfil.nivel_rol).length} estilos disponibles</small></span><span aria-hidden="true">↗</span></button>}
             </>}
             {section === 'images' && <>
               <h2>Imágenes</h2>
@@ -164,7 +167,7 @@ export default function PerfilEdit({ perfil, session, onBack, onUpdate }) {
           </motion.div>
         </section>
         <aside className="profile-edit-preview" aria-label="Vista previa del perfil">
-          <div className="profile-edit-preview-top"><span><Eye size={16} /> Vista previa</span>{canCustomize && <button type="button" onClick={() => setSelectorAbierto(true)} disabled={Boolean(busy)}><Palette size={16} /> Estilo</button>}</div>
+          <div className="profile-edit-preview-top"><span><Eye size={16} /> Vista previa</span><div className="profile-view-controls">{theme.animated && <ProfileEffectsControl preference={preference} onChange={setPreference} />}{canCustomize && <button type="button" className="profile-style-button" onClick={() => setSelectorAbierto(true)} disabled={Boolean(busy)}><Palette size={16} /> Estilos</button>}</div></div>
           <div className="theme-panel profile-preview-card">
             <div className="profile-preview-banner">{form.banner_url && <img src={profileImageUrl(form.banner_url) || FALLBACK} alt="" style={{ objectPosition: `50% ${form.banner_pos_y}%` }} />}</div>
             <div className="profile-preview-body"><div className="theme-avatar-container profile-preview-avatar"><img src={profileImageUrl(form.avatar_url) || FALLBACK} onError={imageFallback} alt="Avatar en el perfil" style={{ objectPosition: `${form.avatar_pos_x}% ${form.avatar_pos_y}%`, transform: `scale(${form.avatar_scale})` }} /></div><span className="profile-preview-theme">{theme.name}</span><h2 className="theme-h1">{form.apodo || perfil.discord_nombre}</h2><span className="profile-preview-handle">@{perfil.discord_nombre} · {form.posicion}</span><p>{form.bio || 'Sin estado...'}</p><div className="profile-preview-widgets">{[form.widget_1, limites.widgets > 1 ? form.widget_2 : 'Ninguno'].filter(widget => widget !== 'Ninguno').map((widget, index) => <div key={`${index}-${widget}`}><LayoutGrid size={17} /><span>{widget}</span><span>↗</span></div>)}</div>{song && <div className="profile-preview-song"><Music size={16} /> Canción favorita</div>}</div>
@@ -172,7 +175,7 @@ export default function PerfilEdit({ perfil, session, onBack, onUpdate }) {
           <p className="profile-edit-note">Los cambios del perfil se publican al guardar.</p>
         </aside>
       </main>
-      {pickerVisible && <PerfilThemePicker themeId={perfil.tema_perfil} color={perfil.color_pixel} onPreview={setPreview} onSave={guardarTema} onCancel={closePicker} disabled={Boolean(busy)} />}
+      {pickerVisible && <PerfilThemePicker effectsMode={effectsMode} level={perfil.nivel_rol} themeId={perfil.tema_perfil} color={perfil.color_pixel} onPreview={setPreview} onSave={guardarTema} onCancel={closePicker} disabled={Boolean(busy)} />}
     </div>
   </MotionConfig>;
 }

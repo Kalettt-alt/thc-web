@@ -6,10 +6,14 @@ import { ArrowLeft, Trash2, Edit3, Star, CloudLightning, MessageSquare, ArrowUpR
 import { motion, MotionConfig } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { obtenerRango } from '../utils/roles';
-import { guardarVoto, enviarNotificacion, procesarMenciones, imagenSegura } from '../utils/foro';
+import { guardarVoto, enviarNotificacion, procesarMenciones } from '../utils/foro';
+import { createForumDraft, disposeForumDraft, saveForumDraft } from '../utils/forumMedia';
 import Comentario from '../components/foro/Comentario';
 import TextoMenciones from '../components/foro/TextoMenciones';
 import ForoDialog from '../components/foro/ForoDialog';
+import ForoImagePicker from '../components/foro/ForoImagePicker';
+import ForoImages from '../components/foro/ForoImages';
+import useForumAttachments from '../components/foro/useForumAttachments';
 import { useHomeMotion } from '../utils/homeMotion';
 import '../components/foro/Foro.css';
 import '../components/foro/ForoDetalle.css';
@@ -36,6 +40,17 @@ export default function ForoPublicacion({ session }) {
   const pendiente = useRef(false);
   const votoComentarioPendiente = useRef(new Set());
   const textAreaRef = useRef(null);
+  const commentDraftRef = useRef(null);
+  const mountedRef = useRef(true);
+  const { attachments, selecting, addFiles, remove, reset: resetAttachments } = useForumAttachments();
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (!pendiente.current) void disposeForumDraft(supabase, { draft: commentDraftRef.current, table: 'foro_comentarios', authorId: userId });
+    };
+  }, [userId]);
 
   useEffect(() => {
     let activo = true;
@@ -115,21 +130,28 @@ export default function ForoPublicacion({ session }) {
   }, [userId]);
 
   const publicarComentario = async () => {
-    if (!perfilActual || !nuevoComentario.trim() || pendiente.current) return;
+    if (!perfilActual || !nuevoComentario.trim() || pendiente.current || selecting) return;
     pendiente.current = true; setOperacion('comentario');
     try {
       const texto = nuevoComentario.trim();
-      const { data, error } = await supabase.from('foro_comentarios').insert({ publicacion_id: id, autor_id: userId, contenido: texto }).select('*').single();
-      if (error) throw error;
+      if (!commentDraftRef.current) commentDraftRef.current = createForumDraft();
+      const data = await saveForumDraft(supabase, { draft: commentDraftRef.current, table: 'foro_comentarios', authorId: userId,
+        values: { publicacion_id: id, contenido: texto }, attachments });
+      if (!mountedRef.current) return;
       setComentarios(prev => [...prev, { ...data, autor: perfilActual }]);
       setNuevoComentario('');
+      resetAttachments(); commentDraftRef.current = null;
       toast.success('Comentario publicado.');
       try {
         await enviarNotificacion(post.autor_id, userId, 'comentario', id, data.id);
         await procesarMenciones(texto, userId, id, data.id, [post.autor_id]);
       } catch { toast.error('Comentario guardado; no se pudieron enviar las notificaciones.'); }
-    } catch { toast.error('No se pudo comentar. Tu texto sigue aquí.'); }
-    finally { pendiente.current = false; setOperacion(null); }
+    } catch (error) { if (mountedRef.current) toast.error(error.message || 'No se pudo comentar. Tu texto sigue aquí.'); }
+    finally {
+      pendiente.current = false;
+      if (mountedRef.current) setOperacion(null);
+      else void disposeForumDraft(supabase, { draft: commentDraftRef.current, table: 'foro_comentarios', authorId: userId });
+    }
   };
 
   const guardarEdicionPost = async () => {
@@ -186,14 +208,14 @@ export default function ForoPublicacion({ session }) {
               <span className="fdetail-category"><Hash size={15} aria-hidden="true" />{post.etiqueta || 'Debate'}</span>
               <h1 className="fdetail-title">{post.titulo}</h1>
               {editandoPost ? <div className="fdetail-edit"><label htmlFor="editar-post">Editar tu mensaje</label><textarea id="editar-post" rows={6} maxLength={10000} disabled={!!operacion} value={contenidoEditado} onChange={event => setContenidoEditado(event.target.value)} className="fdetail-textarea" /><div className="fdetail-form-actions"><button disabled={!!operacion} onClick={() => { setEditandoPost(false); setContenidoEditado(post.contenido); }} className="fdetail-button fdetail-button-secondary">Cancelar</button><button disabled={!!operacion || !contenidoEditado.trim()} onClick={guardarEdicionPost} className="fdetail-button fdetail-button-primary">{operacion === 'edicion' ? 'Guardando...' : 'Guardar'}</button></div></div> : <p className="fdetail-content"><TextoMenciones texto={post.contenido} /></p>}
-              {post.imagenes?.length > 0 && <div className="fdetail-attachments">{post.imagenes.map(imagenSegura).filter(Boolean).map((img, idx) => <a key={idx} href={img} target="_blank" rel="noopener noreferrer"><img loading="lazy" decoding="async" src={img} alt="Imagen adjunta" /><span>Ver imagen<ArrowUpRight size={17} /></span></a>)}</div>}
+              <ForoImages images={post.imagenes} />
             </div>
           </motion.article>
           <section className="fdetail-discussion">
             <div className="fdetail-discussion-heading"><div><span className="fdetail-eyebrow">TU VOZ TAMBIÉN JUEGA</span><h2><MessageSquare size={29} aria-hidden="true" />Discusión <span>{comentarios.length}</span></h2></div><p>El debate lo hacemos entre todos.</p></div>
             <div className="fdetail-comment-compose">
               <img src={perfilActual?.avatar_url || '/imagenes/LogoTHC.png'} alt="" />
-              <div className="fdetail-comment-compose-main"><label htmlFor="nuevo-comentario">Suma tu voz</label><textarea id="nuevo-comentario" ref={textAreaRef} rows={3} maxLength={10000} disabled={!!operacion} placeholder="Suma tu voz a la discusión..." value={nuevoComentario} onChange={e => setNuevoComentario(e.target.value)} /><div className="fdetail-comment-compose-footer"><span>Una opinión. Otra jugada.</span><button onClick={publicarComentario} disabled={!!operacion || !nuevoComentario.trim() || !perfilActual} className="fdetail-button fdetail-button-primary"><Send size={17} />{operacion === 'comentario' ? 'Enviando...' : 'Comentar'}</button></div></div>
+              <div className="fdetail-comment-compose-main"><label htmlFor="nuevo-comentario">Suma tu voz</label><textarea id="nuevo-comentario" ref={textAreaRef} rows={3} maxLength={10000} disabled={!!operacion || !perfilActual} placeholder="Suma tu voz a la discusión..." value={nuevoComentario} onChange={e => setNuevoComentario(e.target.value)} /><ForoImagePicker compact attachments={attachments} onAddFiles={addFiles} onRemove={remove} disabled={!!operacion || !perfilActual} selecting={selecting} /><div className="fdetail-comment-compose-footer"><span>Una opinión. Otra jugada.</span><button onClick={publicarComentario} disabled={!!operacion || selecting || !nuevoComentario.trim() || !perfilActual} className="fdetail-button fdetail-button-primary"><Send size={17} />{operacion === 'comentario' ? 'Enviando...' : 'Comentar'}</button></div></div>
             </div>
             <div className="fdetail-comments">{(respuestasPorPadre.get(null) || []).map(comentario => <Comentario key={comentario.id} comentario={comentario} autorPostId={post.autor_id} perfilActual={perfilActual} setComentarios={setComentarios} publicacionId={id} respuestasPorPadre={respuestasPorPadre} votosComentarios={votosComentarios} onVotar={manejarVotoComentario} />)}</div>
           </section>

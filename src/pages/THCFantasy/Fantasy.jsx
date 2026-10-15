@@ -109,7 +109,7 @@ function FantasyCareer({ session }) {
       )}
 
       {fase === 'menu' && miClub && (
-        <MenuDF key={miClub.liga + ":" + miClub.id} club={miClub} apodo={apodo} partidaCargada={partidaGuardada} userId={userId} />
+        <div className="df-career-reveal" data-motion="on"><MenuDF key={miClub.liga + ":" + miClub.id} club={miClub} apodo={apodo} partidaCargada={partidaGuardada} userId={userId} /></div>
       )}
       
     </div>

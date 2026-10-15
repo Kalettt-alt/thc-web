@@ -7,6 +7,7 @@ import { normalizePlayerList } from './utValidation';
 import { addSquadCard, arrangeSquad, canSwapSquadCards, effectivePlayerGrl, effectiveSquadOverall, repairSquad, SQUAD_FORMATIONS, swapSquadCards, validateStartingSquad } from './squadUT';
 import { catalogCard, clampCardRating, displayCardPosition, isUtSchemaMissing, utRequestError } from './utCards';
 import { saveUtSquad } from './squadPersistenceUT';
+import { readStarterCardsUT } from './starterPackUT';
 import PlayerCardUT from './PlayerCardUT';
 import PlayerCardDetailsUT from './PlayerCardDetailsUT';
 import ClubIdentityLogoUT from './ClubIdentityLogoUT';
@@ -33,6 +34,7 @@ export default function TeamUT({ onVolver, tutorialData = null, clubData = null,
   const [exitPrompt,setExitPrompt] = useState(false);
   const [clubOpen,setClubOpen] = useState(false);
   const [clubCards,setClubCards] = useState([]);
+  const [clubHasNext,setClubHasNext] = useState(false);
   const [clubPage,setClubPage] = useState(0);
   const [clubLoading,setClubLoading] = useState(false);
   const [clubError,setClubError] = useState('');
@@ -79,7 +81,8 @@ export default function TeamUT({ onVolver, tutorialData = null, clubData = null,
       try{
         const {data,error:loadError}=await supabase.from('ut_cartas_club').select('id,carta:ut_cartas(*)').eq('user_id',userId).order('adquirido_en',{ascending:false}).range(clubPage*24,clubPage*24+23);
         if(loadError)throw loadError;
-        if(!cancelled)setClubCards((data||[]).filter(row=>row.carta).map(row=>catalogCard(row.carta,row.id)));
+        const initials=clubPage===0?await readStarterCardsUT(supabase):[];
+        if(!cancelled){setClubCards([...initials,...(data||[]).filter(row=>row.carta).map(row=>catalogCard(row.carta,row.id))]);setClubHasNext((data||[]).length===24);}
       }catch(err){if(!cancelled)setClubError(isUtSchemaMissing(err)?'Todavía no tienes un catálogo de cartas activo.':utRequestError(err,'No se pudieron cargar tus cartas.'));}
       finally{if(!cancelled)setClubLoading(false);}
     };void load();return()=>{cancelled=true;};
@@ -143,7 +146,7 @@ export default function TeamUT({ onVolver, tutorialData = null, clubData = null,
     </aside>
     <LayoutGroup id="ut-squad-layout"><main className="ut-squad__main" inert={Boolean(detail||clubOpen||exitPrompt)}><div className="ut-squad__pitch"><SquadPitchUT warm/><span className="ut-squad__pitch-label">{club.nombre}<span>{formation}</span></span>{slots.map((slot,i)=>renderSlot('titulares',i,slot))}</div><div className="ut-squad__bench"><section><h2>Suplentes</h2><div>{Array.from({length:7},(_,i)=>renderSlot('suplentes',i))}</div></section>{squad.reservas.length>0&&<section><h2>Reservas</h2><div>{squad.reservas.map((_,i)=>renderSlot('reservas',i))}</div></section>}</div></main></LayoutGroup>
     {detail&&<PlayerCardDetailsUT player={detail.player} targetPosition={detail.slot?.section==='titulares'?slots[detail.slot.index]?.[0]:undefined} effectiveGrl={detail.slot?.section==='titulares'?effectivePlayerGrl(detail.player,slots[detail.slot.index]?.[0]):undefined} onClose={closeDetail} onAction={detail.slot ? ()=>{setSelected(detail.slot);setDetail(null);} : ()=>addCard(detail.player)} actionLabel={detail.slot?'Intercambiar posición':players.some(player=>player.id===detail.player.id)?'Ya está en tu plantilla':'Incorporar al equipo'} actionDisabled={saving||Boolean(tutorialData)||(!detail.slot&&players.some(player=>player.id===detail.player.id))}/>}
-    {clubOpen&&<div className="ut-squad__scrim" onClick={()=>setClubOpen(false)} inert={Boolean(detail)}><section className="ut-squad__library" role="dialog" aria-modal="true" aria-label="Cartas del club" onClick={e=>e.stopPropagation()}><header><h2>Tu club.</h2><button onClick={()=>setClubOpen(false)} aria-label="Cerrar cartas del club"><X/></button></header>{clubLoading?<p role="status">Cargando cartas…</p>:clubError?<p role="alert">{clubError}</p>:clubCards.length?<div className="ut-squad__collection">{clubCards.map(player=><button key={player.id} onClick={()=>setDetail({player})} aria-label={`Ver carta de ${player.nombre}`}><PlayerCardUT player={player}/><span>{players.some(p=>p.id===player.id)?'En la plantilla':'Ver carta'}</span></button>)}</div>:<p>Las cartas que abras en Sobres aparecerán aquí.</p>}<footer><button disabled={clubPage===0||clubLoading} onClick={()=>setClubPage(p=>p-1)}>Anterior</button><span>Página {clubPage+1}</span><button disabled={clubCards.length<24||clubLoading} onClick={()=>setClubPage(p=>p+1)}>Siguiente</button></footer></section></div>}
+    {clubOpen&&<div className="ut-squad__scrim" onClick={()=>setClubOpen(false)} inert={Boolean(detail)}><section className="ut-squad__library" role="dialog" aria-modal="true" aria-label="Cartas del club" onClick={e=>e.stopPropagation()}><header><h2>Tu club.</h2><button onClick={()=>setClubOpen(false)} aria-label="Cerrar cartas del club"><X/></button></header>{clubLoading?<p role="status">Cargando cartas…</p>:clubError?<p role="alert">{clubError}</p>:clubCards.length?<div className="ut-squad__collection">{clubCards.map(player=><button key={player.id} onClick={()=>setDetail({player})} aria-label={`Ver carta de ${player.nombre}`}><PlayerCardUT player={player}/><span>{players.some(p=>p.id===player.id)?'En la plantilla':'Ver carta'}</span></button>)}</div>:<p>Las cartas que abras en Sobres aparecerán aquí.</p>}<footer><button disabled={clubPage===0||clubLoading} onClick={()=>setClubPage(p=>p-1)}>Anterior</button><span>Página {clubPage+1}</span><button disabled={!clubHasNext||clubLoading} onClick={()=>setClubPage(p=>p+1)}>Siguiente</button></footer></section></div>}
     {exitPrompt&&<div className="ut-squad__scrim"><section className="ut-squad__exit" role="dialog" aria-modal="true" aria-labelledby="ut-unsaved"><h2 id="ut-unsaved">Tienes cambios sin guardar.</h2><button onClick={()=>setExitPrompt(false)}>Seguir editando</button><button onClick={onVolver}><RotateCcw size={16}/> Salir sin guardar</button></section></div>}
   </div>;
 }

@@ -13,7 +13,7 @@ import MonedaUT from './MonedaUT.png';
 import WidgetReproductor from './WidgetReproductor';
 import MusicaUT from './MusicaUT';
 import ConfUT from './ConfUT'; 
-import ComingSoon from '../../components/ui/ComingSoon';
+import PlayUT from './PlayUT';
 import EmptySectionUT from './EmptySectionUT';
 import TransicionMenu from './TransicionMenu'; 
 import OverMusic from './OverMusic';
@@ -267,7 +267,7 @@ export default function MenuUT({ onVolver, onPlaySkill, initialClubData = null }
                                                              
       <AnimatePresence>
         {activeGameMode === 'jugar' && (
-          <ComingSoon key="jugar" name="Jugar · Ultimate Team" overlay onBack={() => executeTransition(() => setActiveGameMode(null))} />
+          <PlayUT key="jugar" clubData={clubInfo} squadData={clubSquad} onOpenTeam={() => executeTransition(() => setActiveGameMode('equipo'))} onVolver={() => executeTransition(() => setActiveGameMode(null))} />
         )}
         {['mercado','camino'].includes(activeGameMode) && <EmptySectionUT key={activeGameMode} section={activeGameMode} onVolver={() => executeTransition(() => setActiveGameMode(null))}/>}
         

@@ -11,7 +11,7 @@ test('penalización distingue puestos naturales, bandas, familias y portero fuer
   const cases = [
     ['GK','LW',40],['ST','GK',40],['RW','RM',2],['LW','LM',2],['RW','LM',6],
     ['RB','LB',6],['LWB','RWB',6],['LB','CB',3],['CDM','CAM',3],['CF','ST',3],
-    ['CB','ST',18],['CB','LW',18],['RB','CM',10],['CM','ST',9],['CM','LM',6],['LW','ST',5],
+    ['CB','ST',18],['CB','LW',18],['RB','CM',10],['CM','ST',9],['CM','LM',3],['CM','RM',3],['CM','LW',6],['CDM','RM',6],['LW','ST',5],
   ];
   for (const [pos,target,expected] of cases) {
     assert.equal(playerPositionPenalty({pos},target),expected,`${pos} → ${target}`);
@@ -21,6 +21,19 @@ test('penalización distingue puestos naturales, bandas, familias y portero fuer
   assert.equal(playerPositionPenalty({pos:'CM',posiciones_secundarias:['CAM']},'CAM'),0);
   assert.equal(playerPositionPenalty({pos:'CM',posiciones_secundarias:'CAM'},'CAM'),3);
   assert.equal(positionFit({pos:'CM',posiciones_secundarias:['CAM']},'CAM'),2);
+});
+
+test('MD y MI se adaptan a MC con penalización leve de3 en ambas direcciones', () => {
+  for (const [pos,target] of [['RM','CM'],['LM','CM'],['CM','RM'],['CM','LM']]) {
+    const player={id:`adapt-${pos}`,pos,grl:80};
+    const before=structuredClone(player);
+    assert.equal(playerPositionPenalty(player,target),3);
+    assert.equal(effectivePlayerGrl(player,target),77);
+    assert.deepEqual(player,before);
+    assert.equal(playerPositionPenalty({...player,posiciones_secundarias:[target]},target),0);
+  }
+  assert.equal(playerPositionPenalty({pos:'RW'},'RM'),2);
+  assert.equal(playerPositionPenalty({pos:'GK'},'CM'),40);
 });
 
 test('GRL efectivo baja por puesto sin mutar GRL ni estadísticas originales y se limita a 0–99', () => {

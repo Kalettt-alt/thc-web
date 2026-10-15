@@ -1,59 +1,88 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { ArrowLeft, ArrowRight, RotateCcw } from 'lucide-react';
+import { ArrowLeft, ArrowRight, RotateCcw, SlidersHorizontal } from 'lucide-react';
 import ClubIdentityLogoUT from './ClubIdentityLogoUT';
-import { matchElapsedSeconds, matchVisibleState, observeMatchClock, simulationPlayerMarkers } from './simulationUT';
+import MatchPitchUT from './MatchPitchUT';
+import MatchCoachUT from './MatchCoachUT';
+import { advanceOfflineMatch, applyOfflineCoaching, matchClockState, matchDurationSeconds, matchVisibleState } from './simulationUT';
 import './MatchSimulationUT.css';
 
-const EVENT_LABELS = { goal: 'GOL', save: 'ATAJADA', post: 'AL PALO', shot: 'REMATE', pass: 'EN JUEGO', kickoff: 'SAQUE', halftime: 'ENTRETIEMPO', fulltime: 'FINAL' };
-const playerName = player => player.nombre || player.name;
-const displayTime = elapsed => `${String(Math.floor(elapsed / 60)).padStart(1, '0')}:${String(Math.floor(elapsed % 60)).padStart(2, '0')}`;
-
-function TeamMark({ team }) {
-  return <ClubIdentityLogoUT club={{ ...team, user_id: team.id }} userId={team.id} className="ut-match__logo" />;
-}
-
+const EVENT_LABELS = { goal: 'GOL', save: 'ATAJADA', post: 'AL PALO', shot: 'REMATE', pass: 'EN JUEGO', kickoff: 'SAQUE', halftime: 'DESCANSO', fulltime: 'FINAL', tactics:'AJUSTE DEL DT' };
+const displayTime = elapsed => `${Math.floor(elapsed / 60)}:${String(Math.floor(elapsed % 60)).padStart(2, '0')}`;
+const clockAt = (match, offset) => ({ ...matchClockState(match, Date.now() + offset), observedAt: Date.now() });
+function TeamMark({ team }) { return <ClubIdentityLogoUT club={{ ...team, user_id: team.id }} userId={team.id} className="ut-match__logo" />; }
 function eventDescription(event, match) {
-  if (!event) return 'La pelota empieza a rodar.';
-  if (event.type === 'halftime') return 'Los equipos vuelven al campo en unos segundos.';
+  if (!event) return 'Los equipos están listos.';
+  if (event.type === 'halftime') return 'Una pausa para pensar la siguiente jugada.';
   if (event.type === 'fulltime') return 'Terminó el encuentro.';
-  const name = (event.side === 'home' ? match.home : match.away)?.nombre || 'El equipo';
-  if (event.type === 'goal') return `${event.player || name} define la jugada.`;
-  if (event.type === 'save') return `${event.player || 'El arquero'} responde bajo los tres palos.`;
-  if (event.type === 'post') return `${event.player || name} hace temblar el arco.`;
-  if (event.type === 'shot') return `${event.player || name} prueba al arco.`;
-  if (event.type === 'kickoff') return event.pattern || `${name} pone la pelota en juego.`;
-  return `${event.player || name}${event.pattern ? ` · ${event.pattern.toLowerCase()}` : ' busca un espacio para el pase.'}`;
+  if (event.type === 'tactics') return `${event.pattern || 'Cambios confirmados'}.`;
+  const team = (event.side === 'home' ? match.home : match.away)?.nombre || 'El equipo';
+  if (event.type === 'goal') return `${event.player || team} marca para ${team}.`;
+  if (event.type === 'save') return `${event.player || 'El arquero'} se queda con el remate.`;
+  if (event.type === 'post') return `${event.player || team} estrella la pelota en el palo.`;
+  if (event.type === 'shot') return `${event.player || team} prueba al arco.`;
+  return event.pattern || `${team} busca un espacio.`;
 }
 
-export default function MatchSimulationUT({ match, online = false, serverOffset = 0, serverStatus = 'playing', viewerId, connectionError = '', onVolver, onReplay }) {
+export default function MatchSimulationUT({ match, online = false, serverOffset = 0, serverStatus = 'playing', viewerId, connectionError = '', onVolver, onReplay, onCoachOnline }) {
   const reduced = useReducedMotion();
-  const [elapsed, setElapsed] = useState(() => matchElapsedSeconds(match, Date.now() + serverOffset));
-  useEffect(() => observeMatchClock(match, setElapsed, { now: () => Date.now() + serverOffset }), [match, serverOffset]);
-  const view = useMemo(() => matchVisibleState(match, elapsed), [match, elapsed]);
-  const finished = online ? serverStatus === 'finished' : elapsed >= 180;
-  const confirming = online && elapsed >= 180 && !finished;
-  const homeScore = online ? Number(match.home_goals) || 0 : view.stats.home.goals;
-  const awayScore = online ? Number(match.away_goals) || 0 : view.stats.away.goals;
-  const current = view.latest;
-  const markers = useMemo(() => [...simulationPlayerMarkers(match.home, 'home', current).map(marker => ({ ...marker, side: 'home' })), ...simulationPlayerMarkers(match.away, 'away', current).map(marker => ({ ...marker, side: 'away' }))], [match.home, match.away, current]);
-  const flash = current && ['goal', 'halftime'].includes(current.type) && elapsed - current.second < 3;
-  const scene = current?.side === 'away' ? 'away' : 'home';
-  const onGoalLine = ['goal', 'post', 'shot', 'save'].includes(current?.type);
-  const ball = current?.type === 'kickoff' || current?.type === 'halftime' ? [50, 50] : [onGoalLine ? 43 + ((current?.second || 0) % 14) : 18 + ((current?.second || 0) * 17 % 65), onGoalLine ? scene === 'home' ? 7 : 93 : scene === 'home' ? 30 : 70];
-  const isAway = online && viewerId === match.away.id;
+  const [localMatch, setLocalMatch] = useState(match);
+  const [clock, setClock] = useState(() => clockAt(match, serverOffset));
+  const [showCoach, setShowCoach] = useState(false);
+  const [leavePrompt, setLeavePrompt] = useState(false);
+  const localRef = useRef(match);
+  const sourceRef = useRef(match);
+  const focusBack = useRef(null);
+  const source = online ? match : localMatch;
+  const duration = matchDurationSeconds(source);
+  useEffect(() => { sourceRef.current = match; }, [match]);
+  useEffect(() => {
+    let cancelled = false;
+    const tick = () => {
+      if (cancelled) return;
+      const current = online ? sourceRef.current : localRef.current;
+      const nextClock = clockAt(current, serverOffset);
+      if (!online) {
+        const next = advanceOfflineMatch(current, nextClock.elapsed);
+        if (next !== current) { localRef.current = next; setLocalMatch(next); }
+      }
+      setClock(nextClock);
+    };
+    const resync = () => { if (!document.hidden) tick(); };
+    tick(); const timer = setInterval(tick, 200);
+    document.addEventListener('visibilitychange', resync);
+    return () => { cancelled = true; clearInterval(timer); document.removeEventListener('visibilitychange', resync); };
+  }, [online, serverOffset]);
+  const view = useMemo(() => matchVisibleState(source, clock.elapsed), [source, clock.elapsed]);
+  const finished = online ? serverStatus === 'finished' : clock.phase === 'finished';
+  const confirming = online && clock.phase === 'finished' && !finished;
+  const coachVisible = showCoach && !finished && (!online || source.simulation_version >= 2);
+  const homeScore = online ? Number(source.home_goals) || 0 : view.stats.home.goals;
+  const awayScore = online ? Number(source.away_goals) || 0 : view.stats.away.goals;
+  const current = [...view.events].reverse().find(event => ['goal','save','post','shot'].includes(event.type) && clock.elapsed - event.second < 2.6) || view.latest;
+  const flash = current?.type === 'goal' && clock.elapsed - current.second < 2.6;
+  const isAway = online && viewerId === source.away.id;
+  const ownTeam = isAway ? source.away : source.home;
   const ownScore = isAway ? awayScore : homeScore;
   const rivalScore = isAway ? homeScore : awayScore;
   const result = ownScore > rivalScore ? 'VICTORIA.' : ownScore < rivalScore ? 'A SEGUIR.' : 'IGUALES.';
   const goals = view.events.filter(event => event.type === 'goal');
-  return <section className="ut-match" role="dialog" aria-modal="true" aria-label={online ? 'Partido online Ultimate Team' : 'Partido de práctica Ultimate Team'} onKeyDown={event => { if (event.key === 'Escape') onVolver(); }}>
-    <header className="ut-match__header"><button autoFocus type="button" onClick={onVolver} aria-label="Regresar"><ArrowLeft size={18} /></button><span>{online ? 'ONLINE' : 'PRÁCTICA'} <i /> SIMULACIÓN</span><span>{confirming ? 'Confirmando resultado…' : finished ? 'Final' : displayTime(Math.max(0, 180 - elapsed))}</span></header>
-    <div className="ut-match__scoreboard"><div className="ut-match__team"><TeamMark team={match.home} /><div><span>{online ? 'LOCAL' : 'TU CLUB'}</span><strong>{match.home.nombre}</strong><small>GRL {match.home.grl}</small></div></div><div className="ut-match__score"><strong>{homeScore}<span>:</span>{awayScore}</strong><span>{finished ? 'FINAL' : confirming ? '90′' : `${view.minute}′`} {!finished && !confirming && <i />}</span></div><div className="ut-match__team ut-match__team--away"><TeamMark team={match.away} /><div><span>VISITANTE</span><strong>{match.away.nombre}</strong><small>GRL {match.away.grl}</small></div></div></div>
-    {connectionError && <p className="ut-match__connection" role="status">Reconectando con el partido. El marcador se actualizará cuando vuelva la conexión.</p>}
-    <div className="ut-match__content">
-      {!finished && <div className="ut-match__stadium"><div className="ut-match__pitch"><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><rect x="6" y="5" width="88" height="90" /><path d="M6 50h88M29 5v17h42V5M38 5v8h24V5M29 95V78h42v17M38 95v-8h24v8" /><ellipse cx="50" cy="50" rx="13" ry="11" /><circle cx="50" cy="50" r=".7" /><path d="M44 5V2h12v3M44 95v3h12v-3" /></svg><span className="ut-match__pitch-mark" aria-hidden="true">THC</span>{markers.map(marker => <motion.span key={`${marker.side}-${marker.player.id || marker.index}`} title={playerName(marker.player)} className={`ut-match__player ut-match__player--${marker.side}`} initial={false} animate={{ x: marker.x, y: marker.y }} transition={{ duration: reduced ? 0 : 1.4, ease: 'easeInOut' }} style={{ left: `${marker.left}%`, top: `${marker.top}%` }}>{marker.index + 1}</motion.span>)}<motion.span className="ut-match__ball" animate={{ left: `${ball[0]}%`, top: `${ball[1]}%` }} transition={{ duration: reduced ? 0 : current?.type === 'shot' || current?.type === 'goal' ? .4 : 1.6 }} /><AnimatePresence>{flash && <motion.div key={`${current.second}-${current.type}`} className={`ut-match__flash ut-match__flash--${current.type}`} initial={{ opacity: 0, y: reduced ? 0 : 15 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}><span>{current.type === 'goal' ? (current.side === 'home' ? match.home.nombre : match.away.nombre) : '45′'}</span><strong>{current.type === 'goal' ? 'GOOOL.' : 'EL DESCANSO.'}</strong><span>{current.type === 'goal' ? current.player || '' : `${homeScore} — ${awayScore}`}</span></motion.div>}</AnimatePresence></div><div className="ut-match__progress"><i style={{ width: `${elapsed / 180 * 100}%` }} /></div></div>}
-      {finished && <motion.div className="ut-match__result" initial={{ opacity: 0, y: reduced ? 0 : 15 }} animate={{ opacity: 1, y: 0 }}><p>90′ · {online ? 'Resultado confirmado' : 'Práctica completada'}</p><h1>{result}</h1><strong>{homeScore}<span>—</span>{awayScore}</strong><div className="ut-match__result-teams"><span>{match.home.nombre}</span><span>{match.away.nombre}</span></div><div className="ut-match__result-stats"><span><b>{view.stats.home.shots}</b>Remates<b>{view.stats.away.shots}</b></span><span><b>{view.stats.home.saves}</b>Atajadas<b>{view.stats.away.saves}</b></span><span><b>{view.stats.home.posts}</b>Palos<b>{view.stats.away.posts}</b></span></div><div className="ut-match__result-actions">{!online && onReplay && <button type="button" onClick={onReplay}><RotateCcw size={17} /> Otra práctica</button>}<button type="button" onClick={onVolver}>Regresar <ArrowRight size={17} /></button></div></motion.div>}
-      <aside className="ut-match__events"><div className="ut-match__event-current" aria-live="polite"><span>{confirming ? 'EN ESPERA' : EVENT_LABELS[current?.type] || 'EN JUEGO'} <b>{`${current?.minute || 0}′`}</b></span><h2>{confirming ? 'Esperando la confirmación del partido.' : eventDescription(current, match)}</h2></div><div className="ut-match__goals"><h3>Goles del encuentro</h3>{goals.length ? goals.map(event => <div key={`${event.second}-${event.side}`}><b>{event.minute}′</b><span>{event.player || (event.side === 'home' ? match.home.nombre : match.away.nombre)}<small>{event.side === 'home' ? match.home.nombre : match.away.nombre}</small></span></div>) : <p>El marcador sigue abierto.</p>}</div><div className="ut-match__energy"><span>Energía inicial</span><span>{match.home.nombre}<b>{Math.round(match.home.stamina ?? 100)}%</b></span><i><span style={{ width: `${match.home.stamina ?? 100}%` }} /></i><span>{match.away.nombre}<b>{Math.round(match.away.stamina ?? 100)}%</b></span><i><span style={{ width: `${match.away.stamina ?? 100}%` }} /></i></div>{!online && <p className="ut-match__practice-note">La práctica no modifica tu club.</p>}</aside>
-    </div>
+  const closeCoach = useCallback(() => { setShowCoach(false); focusBack.current?.focus(); }, []);
+  const applyCoaching = async command => {
+    if (online) { if (!onCoachOnline) throw new Error('No se pudo conectar con la dirección del equipo.'); await onCoachOnline(command); }
+    else { const next = applyOfflineCoaching(localRef.current, command, clock.elapsed); localRef.current = next; setLocalMatch(next); }
+  };
+  const leave = () => { if (online && !finished) setLeavePrompt(true); else onVolver(); };
+  const phaseLabel = finished ? 'FINAL' : confirming ? 'CONFIRMANDO' : clock.phase === 'pre' ? 'POR COMENZAR' : clock.phase === 'halftime' ? 'DESCANSO' : clock.phase === 'second' ? '2.º TIEMPO' : '1.er TIEMPO';
+  return <section className="ut-match" role="dialog" aria-modal="true" aria-label={online ? 'Partido online Ultimate Team' : 'Partido de práctica Ultimate Team'} onKeyDown={event => { if (event.key === 'Escape' && !coachVisible) leave(); }}>
+    <header className="ut-match__header" inert={coachVisible || leavePrompt}><button autoFocus type="button" onClick={leave} aria-label="Regresar"><ArrowLeft size={18} /><span>Regresar</span></button><span><i /> {online ? 'ONLINE' : 'PRÁCTICA'}<em>THC ULTIMATE TEAM</em></span><button ref={focusBack} type="button" className="ut-match__coach-button" disabled={finished || confirming || clock.phase === 'pre' || (online && !(source.simulation_version >= 2))} onClick={() => setShowCoach(true)}><SlidersHorizontal size={17} />Dirigir equipo</button></header>
+    <main className="ut-match__broadcast" inert={coachVisible || leavePrompt}>
+      <div className="ut-match__scoreboard"><div className="ut-match__team"><TeamMark team={source.home} /><div><strong>{source.home.nombre}</strong><small>{source.home.formacion || '4-3-3'} · GRL {source.home.grl}</small></div></div><div className="ut-match__score"><strong>{homeScore}<span>—</span>{awayScore}</strong><span>{phaseLabel}<b>{view.minute}′</b></span></div><div className="ut-match__team ut-match__team--away"><TeamMark team={source.away} /><div><strong>{source.away.nombre}</strong><small>GRL {source.away.grl} · {source.away.formacion || '4-3-3'}</small></div></div></div>
+      {connectionError && <p className="ut-match__connection" role="status">Reconectando. El partido continúa y recuperará el marcador del servidor.</p>}
+      {!finished ? <div className="ut-match__stadium"><MatchPitchUT match={source} now={clock} reduced={reduced} /><div className="ut-match__pitch-edge"><span>VISTA TÁCTICA · CÁMARA RÁPIDA</span><span>{clock.phase === 'halftime' ? `${Math.ceil(clock.halftimeRemaining)} s para volver` : `${displayTime(Math.max(0, duration - clock.elapsed))} de juego`}</span></div><AnimatePresence>{flash && <motion.div key={`${current.second}-${current.side}`} className="ut-match__goal-banner" initial={{ opacity: 0, x: reduced ? 0 : -50 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: reduced ? 0 : 40 }}><b>GOL.</b><span>{current.player}<small>{current.side === 'home' ? source.home.nombre : source.away.nombre}</small></span><strong>{current.minute}′</strong></motion.div>}{clock.phase === 'halftime' && <motion.div className="ut-match__halftime" initial={{ opacity: 0, scale: reduced ? 1 : .94 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}><span>45′ · ENTRETIEMPO</span><h2>El próximo <em>movimiento.</em></h2><p>{homeScore} — {awayScore}</p><button type="button" onClick={() => setShowCoach(true)}>Dirigir equipo <ArrowRight size={17} /></button><small>Segundo tiempo en {Math.ceil(clock.halftimeRemaining)} s</small></motion.div>}{clock.phase === 'pre' && <motion.div className="ut-match__halftime" initial={{ opacity: 0 }} animate={{ opacity: 1 }}><span>THC ULTIMATE TEAM</span><h2>Todo <em>listo.</em></h2><p>{source.home.abreviatura || 'LOCAL'} <b>VS</b> {source.away.abreviatura || 'VISITA'}</p></motion.div>}</AnimatePresence><div className="ut-match__progress"><i style={{ width: `${clock.elapsed / duration * 100}%` }} /></div></div> : <motion.section className="ut-match__result" initial={{ opacity: 0, y: reduced ? 0 : 15 }} animate={{ opacity: 1, y: 0 }}><p>90′ · {online ? 'Resultado confirmado' : 'Práctica completada'}</p><h1>{result}</h1><div className="ut-match__result-score"><TeamMark team={source.home}/><strong>{homeScore}<span>—</span>{awayScore}</strong><TeamMark team={source.away}/></div><div className="ut-match__result-teams"><span>{source.home.nombre}</span><span>{source.away.nombre}</span></div><div className="ut-match__result-stats"><span><b>{view.stats.home.shots}</b>Remates<b>{view.stats.away.shots}</b></span><span><b>{view.stats.home.saves}</b>Atajadas<b>{view.stats.away.saves}</b></span><span><b>{view.stats.home.posts}</b>Palos<b>{view.stats.away.posts}</b></span></div><div className="ut-match__result-actions">{!online && onReplay && <button type="button" onClick={onReplay}><RotateCcw size={17} /> Otra práctica</button>}<button type="button" onClick={onVolver}>Regresar <ArrowRight size={17} /></button></div></motion.section>}
+      <div className="ut-match__matchline"><div className="ut-match__event-current" aria-live="polite"><span>{confirming ? 'EN ESPERA' : EVENT_LABELS[current?.type] || 'EN JUEGO'}<b>{current?.minute || 0}′</b></span><p>{confirming ? 'Esperando la confirmación del resultado.' : eventDescription(current, source)}</p></div><div className="ut-match__team-status"><span>{ownTeam.formacion || '4-3-3'}<b>{ownTeam.mentalidad || 'neutral'}</b></span><span>{Math.round(ownTeam.stamina ?? 100)}%<b>Energía</b></span><span>{ownTeam.substitutions || 0}/5<b>Cambios</b></span></div></div>
+      {goals.length > 0 && <div className="ut-match__goals" aria-label="Goles del partido">{goals.map(event => <span key={`${event.second}-${event.side}`}><b>{event.minute}′</b>{event.player || (event.side === 'home' ? source.home.nombre : source.away.nombre)}<small>{event.side === 'home' ? source.home.abreviatura || 'LOCAL' : source.away.abreviatura || 'VISITA'}</small></span>)}</div>}
+    </main>
+    <AnimatePresence>{coachVisible && <MatchCoachUT key={ownTeam.revision || 0} team={ownTeam} minute={view.minute} halftimeRemaining={clock.halftimeRemaining || 0} onApply={applyCoaching} onClose={closeCoach} reduced={reduced} />}{leavePrompt && <div className="ut-coach-backdrop"><section className="ut-match__leave" role="dialog" aria-modal="true" aria-label="Salir del partido" onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); setLeavePrompt(false); } }}><span>PARTIDO ONLINE</span><h2>¿Volver al menú?</h2><p>El partido seguirá hasta el final. Puedes regresar para ver el resultado.</p><div><button autoFocus type="button" onClick={() => setLeavePrompt(false)}>Seguir viendo</button><button type="button" onClick={onVolver}>Regresar <ArrowRight size={16}/></button></div></section></div>}</AnimatePresence>
   </section>;
 }

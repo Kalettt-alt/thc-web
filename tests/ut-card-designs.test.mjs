@@ -32,7 +32,7 @@ test('banderas locales admiten nombres con acentos y no fabrican un país descon
   assert.equal(cardCountry('Perú').code, 'PE');
   assert.equal(cardCountry('PER').code, 'PE');
   assert.equal(cardCountry('ARG').code, 'AR');
-  assert.ok(cardCountry({ nacionalidad: 'Perú' }).flagUrl.startsWith('data:image/svg+xml,'));
+  assert.ok(cardCountry({ nacionalidad: 'Perú' }).flagUrl.endsWith('/Paises/web/Peru.webp'));
   assert.equal(cardCountry('País sin catalogar').flagUrl, null);
   assert.equal(cardCountry('País sin catalogar').name, 'País sin catalogar');
   assert.equal(displayCardPosition('CM'), 'MC');

@@ -8,6 +8,7 @@ import PerfilEdit from './PerfilEdit';
 
 export default function Perfil({ session }) {
   const { username } = useParams();
+  const profileIdRoute = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(username || '');
   const userId = session?.user?.id;
   const routeKey = username ? `public:${username}` : `owner:${userId || ''}`;
   const currentRoute = useRef(routeKey);
@@ -30,7 +31,7 @@ export default function Perfil({ session }) {
     const controller = new AbortController();
     const load = async () => {
       try {
-        const { data, error: queryError } = await withAlbumTimeout(supabase.from('perfiles').select('*').eq(username ? 'discord_nombre' : 'id', queryValue).maybeSingle().abortSignal(controller.signal));
+        const { data, error: queryError } = await withAlbumTimeout(supabase.from('perfiles').select('*').eq(username && !profileIdRoute ? 'discord_nombre' : 'id', queryValue).maybeSingle().abortSignal(controller.signal));
         if (queryError) throw queryError;
         if (!data) throw new Error('PROFILE_MISSING');
         const { data: tags } = await withAlbumTimeout(supabase.from('perfil_etiquetas').select('*').eq('user_id', data.id).abortSignal(controller.signal));
@@ -43,7 +44,7 @@ export default function Perfil({ session }) {
     };
     load();
     return () => { active = false; controller.abort(); };
-  }, [username, userId, routeKey, retry]);
+  }, [username, userId, profileIdRoute, routeKey, retry]);
 
   useEffect(() => {
     if (!profile?.id) return;

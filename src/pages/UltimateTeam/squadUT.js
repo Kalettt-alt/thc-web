@@ -23,6 +23,7 @@ export function playerPositionPenalty(player, target) {
   const source=player.pos;
   if (source === 'GK' || target === 'GK') return 40;
   if ((['LW','LM'].includes(source) && ['LW','LM'].includes(target)) || (['RW','RM'].includes(source) && ['RW','RM'].includes(target))) return 2;
+  if ((['LM','RM'].includes(source) && target === 'CM') || (source === 'CM' && ['LM','RM'].includes(target))) return 3;
   const from=roleFamily(source), to=roleFamily(target);
   if (!from || !to) return 18;
   if (from === to) {

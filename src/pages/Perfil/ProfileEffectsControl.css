@@ -1,0 +1,7 @@
+.profile-view-controls { display:flex; gap:9px; align-items:center; }
+.profile-effects-control { display:inline-flex; align-items:center; gap:7px; min-height:44px; color:var(--profile-text); border:1px solid var(--profile-line); background:var(--profile-panel); border-radius:12px; padding:0 10px; }
+.profile-effects-control svg { color:var(--accent); flex-shrink:0; }
+.profile-effects-control select { color:inherit; background:transparent; border:0; cursor:pointer; padding:10px 0; max-width:125px; font:inherit; font-size:13px; }
+.profile-effects-control option { color:var(--profile-text); background:var(--profile-panel); }
+.profile-topbar,.profile-content,.profile-editorial-cover,.profile-edit-header,.profile-edit-layout { position:relative; z-index:2; }
+@media(max-width:600px) { .profile-topbar { gap:10px; padding-inline:20px; flex-wrap:wrap; } .profile-view-controls { margin-left:auto; gap:7px; } .profile-topbar:has(.profile-effects-control) .profile-topbar-mark { display:none; } .profile-effects-control { padding-inline:8px; min-height:42px; } .profile-effects-control select { max-width:108px; font-size:12px; } .profile-view-controls .profile-style-button { min-height:42px; padding:9px 12px; font-size:13px; } }

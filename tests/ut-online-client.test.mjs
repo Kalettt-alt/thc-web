@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cancelOnlineQueue, getOnlineStatus, heartbeatOnlineQueue, joinOnlineQueue, onlineUtError, ONLINE_GRL_RANGE, ONLINE_POLL_MS } from '../src/pages/UltimateTeam/onlineUT.js';
+import { cancelOnlineQueue, getOnlineStatus, heartbeatOnlineQueue, joinOnlineQueue, updateOnlineTactics, onlineUtError, ONLINE_GRL_RANGE, ONLINE_POLL_MS } from '../src/pages/UltimateTeam/onlineUT.js';
 
 const requestId = '11111111-1111-4111-8111-111111111111';
 const payload = { status: 'waiting', online_count: 1, server_now: '2026-10-10T12:00:00Z', queue_grl: 71, match: null, team: { grl: 71, stamina: 100, titulares: [] } };
@@ -15,7 +15,17 @@ test('servicio Online envía solo solicitudUUID y recupera el estadoautoritative
   assert.equal(await cancelOnlineQueue(client), payload);
   assert.deepEqual(calls.slice(1).map(call => call.name), ['thc_ut_online_estado', 'thc_ut_online_heartbeat', 'thc_ut_online_cancelar']);
   assert.ok(calls.slice(1).every(call => Object.keys(call.args).length === 0));
-  assert.equal(ONLINE_GRL_RANGE, 3); assert.equal(ONLINE_POLL_MS, 5000);
+  assert.equal(ONLINE_GRL_RANGE, 3); assert.equal(ONLINE_POLL_MS, 2000);
+});
+
+test('táctica envía IDs, revisión y operación idempotente; nunca GRL ni stamina del cliente', async () => {
+  const calls = [];
+  const client = { rpc: async (name, args) => { calls.push({ name, args }); return { data: payload }; } };
+  const titulares = Array.from({ length: 11 }, (_, index) => `p${index + 1}`);
+  await updateOnlineTactics(client, { matchId: requestId, revision: 2, requestId, titulares, formacion: '4-4-2', mentalidad: 'ofensiva', grl: 99, stamina: 100 });
+  assert.deepEqual(calls[0], { name: 'thc_ut_online_tactica', args: { p_match_id: requestId, p_revision: 2, p_request_id: requestId, p_titulares: titulares, p_formacion: '4-4-2', p_mentalidad: 'ofensiva' } });
+  await assert.rejects(updateOnlineTactics(client, { matchId: requestId, revision: 2, titulares: Array(11).fill('p1'), formacion: '4-4-2', mentalidad: 'ofensiva' }), /alineación/);
+  assert.equal(calls.length, 1);
 });
 
 test('identificadorinválido se rechaza antes de escribir en Supabase', async () => {
