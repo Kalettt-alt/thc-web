@@ -26,7 +26,13 @@ export function playerPassKick(player, target, speed, random = Math.random) {
 
 export function playerShotKick(player, target, speed, random = Math.random, { controlled = false, pressure = 5000 } = {}) {
   const fatigue = 100 - playerEnergy(player);
-  const spread = controlled ? (1 - playerSkill(player)) * 160 + fatigue * 0.7 : 950 + (1 - playerSkill(player)) * 2200 + fatigue * 9 + (pressure < 450 ? 450 : 0);
+  const distance = Math.hypot(target.x - player.x, target.y - player.y);
+  const angle = Math.abs(target.x - player.x) / Math.max(300, Math.abs(target.y - player.y));
+  const rangeError = Math.max(0, distance - 1100) * (controlled ? 0.24 : 0.19);
+  const angleError = Math.min(angle, 2.5) * (controlled ? 430 : 650);
+  const spread = controlled
+    ? 90 + (1 - playerSkill(player)) * 330 + fatigue * 1.1 + rangeError + angleError + (pressure < 450 ? 200 : 0)
+    : 750 + (1 - playerSkill(player)) * 1850 + fatigue * 8 + rangeError + angleError + (pressure < 450 ? 380 : 0);
   return {
     target: { x: target.x + (random() - 0.5) * spread, y: target.y },
     speed: speed * (0.82 + playerSkill(player) * 0.2) * (0.85 + playerEnergy(player) * 0.0015)

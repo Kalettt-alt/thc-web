@@ -165,12 +165,14 @@ test('a gesture from a previous turn or another carrier cannot trigger a new act
   assert.equal(JSON.stringify(state), before);
 });
 
-test('aiming extends a turn for at most three seconds and timeout releases the ball', () => {
+test('aiming extends a turn for at most three seconds and timeout loses the ball without an automatic pass', () => {
   const state = possession([player('carrier', true, 3000, 4000)]);
   state.isAiming = true;
   for (let i = 0; i < 500 && state.phase === 'WAITING_USER_INPUT'; i++) stepMatch(state, 1000 / 60, () => 0.5);
-  assert.equal(state.phase, 'BALL_FLIGHT');
+  assert.equal(state.phase, 'SIMULATING');
   assert.ok(Number.isFinite(state.ball.vx) && Number.isFinite(state.ball.vy));
+  assert.equal(state.ball.vx, 0);
+  assert.equal(state.ball.vy, 0);
   assert.equal(state.ball.owner, null);
 });
 
@@ -183,7 +185,7 @@ test('separate aiming gestures share the same three-second budget per turn', () 
     setMatchAiming(state, false);
     if (state.phase === 'WAITING_USER_INPUT') { stepMatch(state, 1000 / 60, () => 0.5); elapsed += 1000 / 60; }
   }
-  assert.equal(state.phase, 'BALL_FLIGHT');
+  assert.equal(state.phase, 'SIMULATING');
   assert.ok(elapsed <= TURN_DURATION_MS + 3100);
 });
 

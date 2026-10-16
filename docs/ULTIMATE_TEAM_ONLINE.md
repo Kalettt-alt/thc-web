@@ -1,39 +1,68 @@
-# Online UT
+# Online UT · versión 4
 
-Esta versión empareja dos usuarios reales y reproduce el mismo partido simulado para ambos. El servidor calcula los goles, la fatiga y las decisiones tácticas; el navegador dibuja el campo horizontal y las jugadas. Ambos pueden cambiar el once, la formación y la mentalidad durante el encuentro.
+Online empareja dos clubes reales y entrega a ambos el mismo partido simulado. Supabase calcula ocasiones, goles, energía y cambios; el navegador presenta la cancha horizontal. La práctica utiliza el mismo tipo de simulación en el dispositivo y permite elegir libremente el rival, sin guardar resultados ni consumir energía del servidor.
 
-## Activación
+## Activación en Supabase
 
-En Supabase SQL Editor ejecuta completo `ComandosSQL_ActualizacionUT.txt` cuando esté disponible: incluye la base de cartas, sus diseños, las políticas del club y la playlist, y Online UT en el orden correcto. Para una instalación que ya tiene esa base actualizada, `ComandosSQL_OnlineUT.txt` contiene solo este módulo.
+La instalación recomendada es ejecutar **todo `ComandosSQL_ActualizacionUT.txt`** en SQL Editor. Reúne club, cartas, diseños, playlist, Online v4, afinidad de posiciones y el sobre inicial en una sola transacción. El módulo del sobre va al final para conservar la validación de las cartas que recibió cada usuario. No hace falta ejecutar también sus archivos individuales.
 
-Si Online v1 ya está instalado, basta ejecutar `ComandosSQL_UTSimulacion.txt` para actualizarlo. Es una migración aditiva: conserva historial y energía. Los partidos v1 que ya están en curso terminan con sus reglas anteriores; los nuevos usan v2.
+Si la base ya tiene Online v3 y el resto de UT actualizado, **`ComandosSQL_UTPartidosVivos.txt`** contiene únicamente el paso a v4; su fuente es `supabase/ut_live_match_v4.sql`. No modifica los sobres, cuentas, saldos ni plantillas permanentes.
 
-No necesita Edge Functions, un servidor adicional ni habilitar Realtime. Usa la sesión de Discord existente y las funciones RPC de Supabase. No ejecuta SQL remoto desde el proyecto.
+`ComandosSQL_OnlineUT.txt` contiene la instalación completa del módulo Online. Si se instala por separado, después deben aplicarse `ComandosSQL_UTAfinidadPosiciones.txt` y `ComandosSQL_SobreInicialUT.txt`, que completan la afinidad y la validación de los recibos iniciales. Los archivos antiguos `ComandosSQL_UTSimulacion.txt` y `ComandosSQL_UTPartidos2Min.txt` corresponden a v2 y v3: para una instalación actual utiliza el TXT completo o el parche v4 correspondiente.
 
-## Reglas
+El servicio usa Auth y RPC de Supabase. No requiere Realtime, Edge Functions ni otro servidor para este modelo de simulación. Los archivos SQL se entregan para ejecutar manualmente; el frontend no instala el esquema.
 
-- El GRL proviene de las once cartas guardadas, verificadas contra el catálogo del servidor o los 23 jugadores iniciales. Se rechazan huecos, copias repetidas y cartas ajenas. Cualquier jugador puede ocupar cualquier puesto manualmente, con penalización al GRL; su posición y estadísticas originales permanecen intactas.
-- La diferencia máxima es siempre tres puntos de GRL efectivo, después de aplicar las penalizaciones de posición. Esperar más tiempo no amplía el rango ni genera un rival ficticio.
-- Una sesión por usuario permite abrir dos pestañas sin duplicar la búsqueda ni el partido. Cada UUID de búsqueda queda registrado, por lo que reintentar una búsqueda cancelada no la revive. Cancelar envía también el UUID pendiente: si la petición de búsqueda aún está llegando al servidor, no podrá crear una cola después de la cancelación.
-- `Jugadores activos` cuenta usuarios únicos esperando o jugando con presencia recibida en los últimos 30 segundos. Las visitas al menú no entran en ese contador.
-- Ambos clientes reciben el mismo ID, equipos y reloj del servidor. Hay cuatro segundos de preparación, dos tiempos de 90 segundos activos y 12 segundos fijos de entretiempo: 192 segundos de reloj desde el saque inicial. El descanso congela el minuto y la fatiga, y no depende de que ambos pulsen un botón.
-- Se generan siete ocasiones por equipo. El GRL y la stamina influyen en la conversión; los marcadores suelen tener pocos goles y nunca superan seis por equipo.
-- La simulación v2 genera únicamente las ocasiones que ya transcurrieron. No decide el resultado antes de jugar. Aplicar un cambio táctico primero completa el pasado hasta el reloj actual y después cambia el equipo; no modifica eventos ni goles anteriores. El navegador no puede enviar marcadores.
-- Al finalizar, el resultado queda guardado una vez. Un jugador que disputa todo el encuentro pierde entre 18 y 26 puntos de energía, con mínimo habitual de 40; las sustituciones usan el tiempo realmente jugado. La banca no utilizada no consume energía. Recuperan 12 puntos por hora hasta 100. Un jugador sin registro de fatiga comienza al 100%.
-- La práctica usa el snapshot actual cuando está disponible y no guarda un resultado ni consume stamina del servidor.
-- Cambiar la plantilla permanente mientras se busca un rival o se disputa el encuentro se bloquea en el servidor. Dentro del partido se utiliza un once independiente y hasta siete suplentes verificados al emparejar. Se permiten cinco sustituciones; un jugador que salió no puede reingresar. La formación admite 4-3-3, 4-4-2 y 4-2-3-1; la mentalidad defensiva reduce el riesgo y la producción ofensiva, y la ofensiva aumenta ambos.
+## Emparejamiento y propiedad de las cartas
 
-La posición principal o una secundaria declarada en el catálogo no penalizan. Un extremo en el mediocampo de su misma banda pierde dos puntos; cambios dentro de defensa, mediocampo o delantera pierden tres, y cambiar de lado pierde seis. Defensa frente a ataque pierde 18; defensa frente a mediocampo, 10; mediocampo frente a ataque, nueve; mediocampo frente a banda, seis; y banda frente a delantero, cinco. Cualquier arquero en un puesto de campo, o un jugador de campo en el arco, pierde 40 puntos. El mínimo es cero y el máximo 99. El emparejamiento calcula la media de los once GRL efectivos en el servidor.
+- El servidor obtiene el GRL efectivo de las once cartas guardadas. Comprueba que cada copia pertenece al usuario y rechaza huecos, repeticiones y cartas inventadas.
+- La diferencia máxima es **3 GRL**, incluso después de una espera larga. El sistema no amplía el rango ni crea un rival ficticio.
+- El catálogo inicial contiene 67 jugadores, pero cada cuenta recibe **23 distintos y equilibrados** una sola vez. Se sortean globalmente sus calidades con pesos base Bronce 55%, Plata 34,5%, Oro 10% y Plus 0,5%; después se asignan jugadores sin duplicados y cubriendo puestos. Solo se renormalizan calidades agotadas. La selección ocurre en el servidor.
+- El recibo conserva las cartas y sus estadísticas, incluso tras reiniciar el club. Las cuentas existentes mantienen su entrega original. El frontend no sustituye una carta por otra de distinta calidad para cubrir una posición.
+- Existe una sesión por usuario. Un UUID identifica cada búsqueda y queda registrado; reintentar uno cancelado no reactiva la cola. Cancelar incluye el UUID aunque la respuesta inicial no haya llegado.
+- El contador del lobby cuenta usuarios únicos buscando o jugando con presencia recibida en los últimos 30 segundos. Las visitas al menú no cuentan. Si falla la consulta, se muestra un valor desconocido.
 
-La presencia y la finalización se mantienen al llamar a los RPC; no hay tarea programada. Un partido desconectado conserva sus tiempos y se finaliza cuando alguien vuelve a consultar Online UT. La fatiga se fecha al final real del partido para que la recuperación transcurrida siga siendo correcta.
+Puede colocarse cualquier carta en cualquier puesto manualmente. El servidor aplica la misma penalización que la plantilla, sin cambiar las estadísticas originales ni aplicar la penalización dos veces. Posición principal/secundaria: 0; ED↔MD y EI↔MI: 2; MD/MI↔MC: 3. Portero en campo o jugador de campo en el arco: 40. Las demás afinidades están definidas en `squadUT.js` y `ut_position_affinity_v3.sql`; el GRL efectivo nunca baja de cero. El emparejamiento utiliza la media de ese once efectivo.
+
+## Reloj y desarrollo del partido
+
+Hay cuatro segundos de preparación antes del saque inicial. La duración nominal es **60 segundos por mitad**. V4 añade entre cuatro y ocho segundos a cada mitad para terminar la acción: cada tiempo dura 64–68 segundos activos. El descanso fijo dura 12 segundos y congela pelota, minuto y energía. En total son 128–136 segundos activos y 140–148 segundos de reloj desde el saque inicial.
+
+El catálogo contiene **20 jugadas** con rutas diferentes: paredes, pases entre líneas, cambios de orientación, desbordes, centros, contraataques, incorporaciones de laterales, tres variantes de córner, tiro libre, presión alta, salida de presión, conducción y segunda jugada. Cada partido genera siete ocasiones por equipo, con catorce jugadas distintas elegidas de ese catálogo. GRL, energía, atributos y mentalidad influyen en la resolución; el marcador tiene un máximo de seis goles por equipo.
+
+La última ocasión de cada mitad se resuelve cuatro segundos antes del silbato. Tres segundos después se registra una atajada controlada, balón fuera, saque desde el medio o despeje seguro; el silbato llega un segundo después. La presentación muestra el añadido y no corta el último remate al marcar 45′ o 90′.
+
+El resultado no se envía al navegador por adelantado. El servidor genera solo las ocasiones transcurridas. Aplicar un cambio primero completa el pasado hasta el reloj actual y luego modifica el equipo: conserva las jugadas y goles anteriores. Los dos participantes reciben los mismos eventos y marcador visibles.
+
+La arenga es un efecto local: lanza confeti con los dos colores del club, con espera de 15 segundos entre usos. No altera GRL, energía ni resultado.
+
+## Dirección y energía
+
+Durante el juego, el añadido y el descanso pueden cambiarse el once, la formación y la mentalidad. Se admite 4-3-3, 4-4-2 o 4-2-3-1 y mentalidad defensiva, neutral u ofensiva. Hay hasta siete suplentes capturados al emparejar y un máximo de cinco sustituciones. Una carta sustituida no puede reingresar. La plantilla permanente se bloquea mientras busca rival o disputa un partido; los cambios del encuentro usan un once independiente.
+
+Cada comando táctico incluye IDs, revisión y un UUID de operación. El servidor rechaza revisiones viejas, cartas ajenas, repeticiones, reingresos y cambios posteriores al final. Si una respuesta es incierta, se reintenta con el mismo UUID, que no vuelve a consumir sustituciones.
+
+El coste base es de 18–26 puntos de energía por 120 segundos activos, según el GRL. El añadido consume su parte proporcional y el descanso no consume. Los cambios reparten el gasto según los segundos realmente jugados; la banca no utilizada permanece intacta. La energía tiene un suelo habitual de 40 y recupera 12 puntos por hora hasta 100. Una carta sin registro comienza al 100%.
+
+La finalización se ejecuta al consultar los RPC, sin tarea programada. Una desconexión no pausa el reloj. Si nadie consulta al terminar, la siguiente consulta finaliza el partido y guarda la energía una sola vez, fechada al final real para respetar su recuperación posterior.
+
+## Compatibilidad con encuentros anteriores
+
+Reinstalar el TXT o el parche v4 conserva los partidos ya creados, sus eventos, snapshots y tiempos. Solo los nuevos pasan a v4.
+
+| Versión | Tiempo activo | Descanso | Reloj desde el saque |
+| --- | --- | --- | --- |
+| v1 | 180 s | 0 s | 180 s |
+| v2 | 180 s | 12 s | 192 s |
+| v3 | 120 s | 12 s | 132 s |
+| v4 | 128–136 s | 12 s | 140–148 s |
+
+V1 conserva su simulación original sin coaching. V2 y v3 mantienen el coaching y la fatiga proporcional de sus propias duraciones. El cliente valida el reloj de cada versión y no interpreta un encuentro anterior como uno nuevo.
 
 ## Contrato del cliente
 
-`onlineUT.js` exporta `getOnlineStatus(client)`, `heartbeatOnlineQueue(client)`, `joinOnlineQueue(client, requestUUID)`, `cancelOnlineQueue(client, requestUUID = null)` y `updateOnlineTactics(client, { matchId, revision, requestId, titulares, formacion, mentalidad })`. El argumento `client` es la instancia habitual de Supabase. La UI consulta aproximadamente cada dos segundos durante el partido y usa el mismo UUID al reintentar. Al salir de una búsqueda, pasa el UUID incluso cuando no se ha confirmado una respuesta.
+`onlineUT.js` exporta `getOnlineStatus(client)`, `heartbeatOnlineQueue(client)`, `joinOnlineQueue(client, requestUUID)`, `cancelOnlineQueue(client, requestUUID = null)` y `updateOnlineTactics(client, { matchId, revision, requestId, titulares, formacion, mentalidad })`. Durante un partido se consulta aproximadamente cada dos segundos; en espera se utiliza un heartbeat de menor frecuencia. Las peticiones que llegaron tarde se descartan si la operación activa cambió.
 
-`titulares` contiene once IDs de las cartas del propio roster capturado para el encuentro. `revision` es la revisión del equipo propio, inicialmente cero. `requestId` identifica una operación táctica y debe conservarse cuando una respuesta de red es incierta: repetirla devuelve el mismo estado sin volver a consumir cambios. El servidor rechaza cartas ajenas, repeticiones, reingresos, revisiones antiguas y cambios después del final.
-
-Todos devuelven:
+Respuesta de un encuentro v4:
 
 ```js
 {
@@ -44,29 +73,38 @@ Todos devuelven:
   team: null | { id, nombre, abreviatura, logo_url, grl, stamina, titulares, formacion, bench, roster },
   match: null | {
     id, home, away, started_at, ends_at,
-    duration_seconds: 180,
-    simulation_version: 2, halftime_seconds: 12,
-    active_seconds, phase: 'pre' | 'first' | 'halftime' | 'second' | 'finished',
-    events: [{ second, side, type, minute, player, shooter }],
+    simulation_version: 4,
+    duration_seconds: 120,             // base nominal
+    active_duration_seconds: 128,       // par, entre 128 y 136
+    first_half_seconds: 64,             // mitad de active_duration_seconds
+    halftime_seconds: 12,
+    active_seconds,
+    phase: 'pre' | 'first' | 'halftime' | 'second' | 'finished',
+    halftime_remaining,
+    events: [{ second, side, type, minute, minuteLabel, player, shooter, play_id, pattern }],
     home_goals, away_goals
   }
 }
 ```
 
-`home_goals` y `away_goals` son los goles visibles hasta `server_now`. El resultado queda confirmado cuando `status` vale `finished`. El último partido terminado sigue disponible para recuperar una pantalla tras una recarga; una nueva búsqueda usa un UUID nuevo. La UI puede recordar que ya cerró ese resumen sin alterar el resultado.
+`started_at` corresponde al saque inicial y `ends_at` incluye el descanso y añadido. `home_goals` y `away_goals` son los goles visibles hasta el reloj del servidor. Solo `status: 'finished'` confirma el resultado final. El último resumen permanece disponible tras recargar; el navegador puede recordar su ID como cerrado sin modificar el resultado guardado.
 
-Los tipos de evento son `kickoff`, `pass`, `goal`, `save`, `post`, `shot`, `halftime` y `fulltime`. En una atajada, `player` identifica al arquero y `shooter` al atacante. `side` conserva el equipo que efectuó el ataque.
+Tipos de evento: `kickoff`, `pass`, `goal`, `save`, `post`, `shot`, `tactics`, `settled`, `clearance`, `halftime` y `fulltime`. Una atajada conserva al arquero en `player` y al atacante en `shooter`; `side` identifica al equipo que atacó. `settled`/`clearance` pueden incluir `safe_end: true` y `resume: 'keeper' | 'middle'`. El añadido se representa con `minuteLabel`, por ejemplo `45+2`.
 
-El evento `tactics` registra una decisión del director técnico. `home` y `away` contienen el once actual, `bench`, `roster`, `mentalidad`, `revision`, `substitutions` y `subbed_off`. Los jugadores conservan `base_grl` y el GRL efectivo con penalización de puesto, sin aplicarla dos veces.
+Los equipos incluyen `mentalidad`, `revision`, `substitutions`, `subbed_off`, once actual, banca y roster. Cada jugador conserva `base_grl`, GRL efectivo, `puesto`, `penalizacion_grl`, energía inicial y segundos jugados.
 
-## Seguridad y comprobación
+## Permisos y comprobaciones locales
 
-Las tablas tienen RLS: lectura propia de sesiones/energía y lectura de metadatos de partidos solo para sus participantes. Las escrituras quedan reservadas a funciones del servidor. Las RPC validan la identidad con `auth.uid()`, fijan `search_path` y no aceptan GRL, stamina, goles ni resultados enviados por el usuario. La RPC táctica acepta solamente IDs, revisión y opciones permitidas, y obtiene los valores del roster canonical capturado. Se usa un bloqueo transaccional para crear parejas y aplicar decisiones sin carreras entre pestañas o peticiones. Cada titular del snapshot incluye `base_grl`, `grl` efectivo, `puesto` y `penalizacion_grl`.
+Las tablas usan RLS y las escrituras del partido/energía pertenecen a funciones del servidor. Las RPC comprueban `auth.uid()`, fijan `search_path` y no aceptan GRL, stamina, marcadores ni resultados enviados por el cliente. El estado interno, la semilla y los eventos almacenados no se exponen mediante lectura REST directa. Los participantes consultan el progreso a través de las RPC. El bloqueo transaccional y los UUID protegen emparejamiento, cancelación y decisiones repetidas.
 
-`thc_ut_reset()` conserva la eliminación actual de Ajustes: borra `club_ut`, `plantillas_ut`, `PlaylistUT`, `equipos_ut` y `perfiles_ut` del usuario que inició sesión. Cancela su cola y bloquea el borrado durante un partido online activo. Conserva el registro de la bonificación inicial para impedir recibirla otra vez, y no borra el catálogo, las cartas adquiridas, los sobres, la energía ni el historial de partidas del módulo nuevo.
+`thc_ut_reset()` borra el club, plantilla, playlist y wallet propios; cancela su cola y se bloquea durante un partido online activo. Conserva el registro de bonificación, el recibo inicial, las cartas y sobres adquiridos, la energía y el historial. Reinstalar no reordena las plantillas: `version_posiciones` distingue el orden antiguo de una colocación manual guardada.
 
-`plantillas_ut.version_posiciones` comienza en cero para las filas antiguas y el trigger del servidor lo cambia a uno al guardar. Permite reconocer el orden inicial antiguo sin deshacer una distribución que el usuario haya guardado deliberadamente. La instalación no reordena plantillas existentes.
+Comprobaciones reproducibles con un runtime local de PGlite:
 
-Diseño basado en la documentación oficial de [funciones de Supabase](https://supabase.com/docs/guides/database/functions), [RLS](https://supabase.com/docs/guides/database/postgres/row-level-security) y [bloqueos de PostgreSQL](https://www.postgresql.org/docs/current/explicit-locking.html).
+```sh
+node scripts/test-ut-live-match-v4-sql.mjs RUTA_AL_RUNTIME_PGLITE
+node scripts/test-ut-update-pipeline-sql.mjs RUTA_AL_RUNTIME_PGLITE
+node --test tests/ut-online-client.test.mjs tests/ut-online-match-validation.test.js tests/ut-match-simulation.test.js tests/ut-match-presentation.test.js
+```
 
-Pruebas locales: `node scripts/test-ut-online-sql.mjs RUTA_AL_RUNTIME_PGLITE` y `node scripts/test-ut-simulation-v2-sql.mjs RUTA_AL_RUNTIME_PGLITE`. Comprueban permisos, filtros, sesiones, reintentos, posiciones, coaching, fatiga proporcional, reloj de dos mitades, resultados y compatibilidad con partidos v1. PGlite usa una sola conexión; verifica las invariantes de repetición, pero una prueba de carga con varias conexiones Postgres queda para el despliegue. No modifica la base de producción.
+La auditoría v4 cubre relojes antiguos y nuevos, reejecución con partidos activos, veinte rutas, catorce ocasiones, eventos visibles iguales para ambos participantes, descanso, cierre de la acción, fatiga, añadido, coaching, cinco cambios, ±3 GRL y permisos. El pipeline prueba también la instalación completa, conservación de datos y entrega de las 23 cartas. Estas pruebas se ejecutaron en PostgreSQL local con una sola conexión; no sustituyen una prueba de carga ni una partida real entre dos navegadores contra el proyecto desplegado.

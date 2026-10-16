@@ -1,8 +1,9 @@
 import { useRef, useState, useEffect } from 'react';
 import { ArrowRight, Crosshair, Flag, Maximize2, Pause, Play, Settings2, Shield, Target, Users, Zap } from 'lucide-react';
 import { useMatchEngine } from './MotorLogica.js';
-import { PITCH_W, PITCH_H, TURN_DURATION_MS, GOAL_Y_TOP } from './ConstantesJuego.js';
+import { PITCH_W, PITCH_H, TURN_DURATION_MS } from './ConstantesJuego.js';
 import { getMatchCamera, getMatchViewport, screenToPitch } from './matchGeometry.js';
+import { buttonShotTarget } from './matchDecisions.js';
 import CanchaDF from './CanchaDF.jsx';
 import JugadorDF from './JugadorDF.jsx';
 import MatchCoachPanel from './MatchCoachPanel.jsx';
@@ -25,7 +26,7 @@ export function GoalCelebration({ event, score, clock, miClub, rival, getImg }) 
 
 function EventIcon({ phase, event }) {
   if (phase === 'GOAL') return <Flag size={21} />;
-  if (event?.type === 'SAVE' || event?.type === 'RECOVERY') return <Shield size={21} />;
+  if (event?.type === 'SAVE' || event?.type === 'RECOVERY' || event?.type === 'BLOCK') return <Shield size={21} />;
   if (phase === 'WAITING_USER_INPUT') return <Target size={21} />;
   if (phase === 'USER_DRIVING') return <Zap size={21} />;
   return <ArrowRight size={21} />;
@@ -60,9 +61,9 @@ export default function JugarDF({ miClub, rival, esLocal, titularesMap, reservas
   const recoveryBlocked = bebidaBusy || bebidaPending || localDrinkBusy;
   const ended = gameState.phase === 'FINISHED';
   const airHeight = Math.max(0, Number(gameState.ball.height) || 0);
-  const opportunity = gameState.opportunities?.user;
+  const shots = Object.values(gameState.playerStats || {}).filter(player => player.isUser).reduce((sum, player) => sum + player.shots, 0);
   const goalEvent = gameState.goalEvent || gameState.lastEvent;
-  const phaseLabel = ready ? 'Todo listo para el saque inicial' : gameState.phase === 'KICKOFF_SETUP' ? 'Los equipos vuelven a sus posiciones' : gameState.phase === 'GOAL_KICK' ? 'El arquero prepara el saque de meta' : gameState.phase === 'THROW_IN' ? 'El equipo prepara la salida desde la banda' : gameState.phase === 'USER_DRIVING' ? 'Tú marcas el camino' : gameState.phase === 'BALL_FLIGHT' ? gameState.ball.airborne ? 'Balón largo por el aire' : 'Balón en movimiento' : halftime ? 'Tiempo de vestuario' : ended ? 'Pitazo final' : isThinking ? 'La decisión es tuya' : owner?.isUser ? 'Construyendo el ataque' : 'El rival tiene el balón';
+  const phaseLabel = ready ? 'Todo listo para el saque inicial' : gameState.phase === 'KICKOFF_SETUP' ? 'Los equipos vuelven a sus posiciones' : gameState.phase === 'GOAL_KICK' ? 'El arquero prepara el saque de meta' : gameState.phase === 'OUT' ? gameState.lastEvent?.type === 'CORNER' ? 'Se acomodan para la esquina' : 'El equipo prepara la salida desde la banda' : gameState.phase === 'TURNOVER_PRESS' ? 'Llegó la presión: perdiste el tiempo para decidir' : gameState.phase === 'USER_DRIVING' ? 'Tú marcas el camino' : gameState.phase === 'BALL_FLIGHT' ? gameState.ball.airborne ? 'Balón largo por el aire' : 'Balón en movimiento' : halftime ? 'Tiempo de vestuario' : ended ? 'Pitazo final' : isThinking ? 'La decisión es tuya' : owner?.isUser ? 'Construyendo el ataque' : 'El rival tiene el balón';
 
   useEffect(() => { if (ready && !showPanel && gameState.players.length) startButton.current?.focus(); }, [ready, showPanel, gameState.players.length]);
 
@@ -141,6 +142,12 @@ export default function JugarDF({ miClub, rival, esLocal, titularesMap, reservas
     } finally { drinkRequest.current = false; setLocalDrinkBusy(false); }
   };
   const switchCamera = () => { cancelPointer(); setCameraMode(value => value === 'FOLLOW' ? 'STADIUM' : 'FOLLOW'); };
+  const shoot = () => {
+    if (!isThinking || !owner) return;
+    cancelPointer();
+    const target = buttonShotTarget(gameState.players, owner);
+    handleInput(target.x, target.y, target.x - owner.x, target.y - owner.y, { shot: true, isDrag: true, expectedTurnId: gameState.turnId, expectedOwnerId: owner.id });
+  };
   const handleKey = event => {
     if (event.key.toLowerCase() === 'p') { event.preventDefault(); openCoach(); return; }
     if (event.key === ' ' && gameState.phase === 'USER_DRIVING') { event.preventDefault(); stopDriving(); return; }
@@ -158,8 +165,7 @@ export default function JugarDF({ miClub, rival, esLocal, titularesMap, reservas
       const recipient = support.find(player => player.id === keyboardTarget) || support[0];
       if (recipient) { event.preventDefault(); cancelPointer(); handleInput(recipient.x, recipient.y, 0, 0, options); setKeyboardTarget(null); }
     } else if (event.key === 'ArrowUp') {
-      event.preventDefault(); cancelPointer();
-      handleInput(PITCH_W / 2, GOAL_Y_TOP, PITCH_W / 2 - owner.x, GOAL_Y_TOP - owner.y, { ...options, isDrag: true });
+      event.preventDefault(); shoot();
     } else if (event.key === 'ArrowDown') {
       event.preventDefault(); cancelPointer();
       handleInput(owner.x, owner.y - 650, 0, 0, { ...options, pickRadius: 0 });
@@ -186,14 +192,14 @@ export default function JugarDF({ miClub, rival, esLocal, titularesMap, reservas
       </div>
       <div className="df-field-direction"><ArrowRight size={11} />ATACAS HACIA ARRIBA</div>
       {cameraMode === 'FOLLOW' && display.showRadar && <div className="df-minimap-wrap"><span>RADAR</span><MatchMinimap players={gameState.players} ball={gameState.ball} camera={camera} viewport={viewport} /></div>}
-      {isThinking && <div className="df-turn-label"><span className="df-live-dot" />TU TURNO</div>}
+      {isThinking && <div className="df-turn-label"><span className="df-live-dot" />{gameState.setPiece?.kind === 'CORNER' ? 'ESQUINA · TU DECISIÓN' : 'TU TURNO'}</div>}
       {keyboardFocus && isThinking && <span className="sr-only" role="status">{support.find(player => player.id === keyboardTarget)?.name ? `Pase seleccionado a ${support.find(player => player.id === keyboardTarget).name}. Pulsa Enter.` : 'Elige compañero con las flechas izquierda y derecha.'}</span>}
       {gameState.phase === 'GOAL' && <GoalCelebration key={goalEvent?.id || 'goal'} event={goalEvent} score={gameState.score} clock={gameState.clock} miClub={miClub} rival={rival} getImg={getImg} />}
       {ready && <div className="df-prematch"><section className="df-prematch__card" aria-labelledby="df-prematch-title"><span className="df-eyebrow">EL PARTIDO ESTÁ POR EMPEZAR</span><h2 id="df-prematch-title">TU EQUIPO.<br />TU DECISIÓN<span>.</span></h2><div className="df-prematch__clubs"><ClubBadge club={miClub} getImg={getImg} /><b>VS</b><ClubBadge club={rival} getImg={getImg} /></div><p>Dos tiempos de 1:30. Revisa tu once y juega cuando estés listo.</p><button type="button" className="df-button df-button--orange" ref={startButton} onClick={() => { if (!drinkRequest.current && !recoveryBlocked) beginMatch(); }} disabled={!gameState.players.length || recoveryBlocked}><Play size={18} />Comenzar partido<ArrowRight size={18} /></button><button type="button" className="df-button df-button--quiet" onClick={() => openCoach()}><Users size={16} />Revisar alineación{onUseBebida && bebidaCount !== null && <span className="df-prematch__drink"><Zap size={12} />{bebidaCount}</span>}</button>{bebidaPending && <p className="df-prematch__pending" role="status">Hay una bebida pendiente. Abre la alineación para confirmar el uso.</p>}</section></div>}
       {gameState.phase === 'KICKOFF_SETUP' && <div className="df-kickoff-label" role="status">SAQUE DE MEDIO · {goalEvent?.scoringTeam === 'USER' ? rival.name : miClub.name}</div>}
       {ended && <div className="df-fulltime df-fulltime--result"><MatchResultCard miClub={miClub} rival={rival} score={gameState.score} players={gameState.players} summary={{ opportunities: gameState.opportunities, playerStats: gameState.playerStats }} getImg={getImg} /></div>}
     </div>
-    <footer className="df-match-footer"><div className="df-event-icon"><EventIcon phase={gameState.phase} event={gameState.lastEvent} /></div><div className="df-match-event"><small>{isThinking ? 'DECIDE LA JUGADA' : 'DESDE LA CANCHA'}</small><p role="status">{gameState.msg || phaseLabel}</p><span>{keyboardFocus ? '←/→ compañero · Enter pase · ↑ tiro · ↓ conducción · P alineación' : isThinking ? owner?.isGK ? 'Toca un compañero para sacar corto · desliza para lanzar largo.' : 'Toca un compañero para pasar · césped para conducir · desliza para disparar.' : phaseLabel}</span></div>{opportunity && !ready && !ended && <div className="df-match-opportunities" title="Ocasiones de tu equipo"><Target size={14} /><b>{opportunity.used}<i>/{opportunity.limit}</i></b><small>Ocasiones</small></div>}{isThinking && <div className="df-turn-clock"><b>{Math.max(0, gameState.turnTimer / 1000).toFixed(1)}<small>s</small></b><span><i style={{ width: `${Math.max(0, 100 * gameState.turnTimer / TURN_DURATION_MS)}%` }} /></span></div>}{gameState.phase === 'USER_DRIVING' && <button type="button" className="df-button df-button--orange df-drive-button" onClick={stopDriving}>Decidir<Target size={16} /></button>}</footer>
+    <footer className="df-match-footer"><div className="df-event-icon"><EventIcon phase={gameState.phase} event={gameState.lastEvent} /></div><div className="df-match-event"><small>{isThinking ? 'DECIDE LA JUGADA' : 'DESDE LA CANCHA'}</small><p role="status">{gameState.msg || phaseLabel}</p><span>{keyboardFocus ? '←/→ compañero · Enter pase · ↑ tiro · ↓ conducción · P alineación' : isThinking ? owner?.isGK ? 'Toca un compañero para sacar corto · desliza para lanzar largo.' : 'Toca para pasar o conducir · dispara cuando quieras. Si esperas, el rival te roba.' : phaseLabel}</span></div>{!ready && !ended && <div className="df-match-opportunities" title="Remates de tu equipo"><Target size={14} /><b>{shots}</b><small>Remates</small></div>}{isThinking && <button type="button" className="df-button df-button--orange df-drive-button df-shoot-button" onClick={shoot} aria-label="Disparar" title="Disparar desde esta posición. Tú decides el riesgo."><Crosshair size={16} /><span>Disparar</span></button>}{isThinking && <div className="df-turn-clock"><b>{Math.max(0, gameState.turnTimer / 1000).toFixed(1)}<small>s</small></b><span><i style={{ width: `${Math.max(0, 100 * gameState.turnTimer / TURN_DURATION_MS)}%` }} /></span></div>}{gameState.phase === 'USER_DRIVING' && <button type="button" className="df-button df-button--orange df-drive-button" onClick={stopDriving}>Decidir<Target size={16} /></button>}</footer>
     {(showPanel || halftime) && <MatchCoachPanel key={halftime ? 'halftime' : 'coach'} initialTab={coachTab} gameState={gameState} miClub={miClub} apodo={apodo} formation={localTactica} onFormation={setLocalTactica} onMentality={setMentality} onSubstitute={substitutePlayer} onSwap={swapPositions} onTalk={applyTeamTalk} onClose={closeCoach} display={display} onDisplay={changeDisplay} bebidaCount={bebidaCount} bebidaBusy={bebidaBusy || localDrinkBusy} bebidaPending={bebidaPending} bebidaError={bebidaError || localDrinkError} onUseBebida={onUseBebida ? useBebida : undefined} />}
   </div>;
 }

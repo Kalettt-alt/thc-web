@@ -1,0 +1,511 @@
+-- DT FANTASY: Bebidas + TOPS / rayos. Copia TODO este archivo en SQL Editor y ejecuta.
+-- Reaplicable. No borra perfiles, monedas ni carreras. Resultados nuevos: +2 / +1 / -1.
+-- El ranking no otorga ventajas por VIP, rol o permisos. Los rayos sobreviven a rescindir.
+-- El motor sigue en el navegador; no es una certificacion contra resultados manipulados.
+-- Las partidas anteriores conservan progreso y no reciben puntos retroactivos.
+
+begin;
+
+create schema if not exists thc_private;
+revoke all on schema thc_private from public, anon, authenticated;
+
+alter table public.fantasy_partidas add column if not exists energia_revision bigint not null default 0;
+
+create table if not exists thc_private.fantasy_bebidas (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  bebidas smallint not null default 2 check (bebidas between 0 and 2),
+  creado_en timestamptz not null default now()
+);
+create table if not exists thc_private.fantasy_bebida_usos (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  solicitud_id uuid not null,
+  partida_id uuid not null,
+  creado_en timestamptz not null default now(),
+  primary key (user_id, solicitud_id)
+);
+create table if not exists thc_private.fantasy_energy_patches (
+  nombre text primary key,
+  aplicado_en timestamptz not null default now()
+);
+alter table thc_private.fantasy_bebidas enable row level security;
+alter table thc_private.fantasy_bebida_usos enable row level security;
+alter table thc_private.fantasy_energy_patches enable row level security;
+revoke all on thc_private.fantasy_bebidas, thc_private.fantasy_bebida_usos, thc_private.fantasy_energy_patches from public, anon, authenticated;
+
+create or replace function thc_private.fantasy_squad_full(p_titulares jsonb, p_reservas jsonb)
+returns jsonb
+language sql
+immutable
+set search_path = ''
+as $squad$
+  select pg_catalog.jsonb_build_object(
+    'titulares', coalesce((select pg_catalog.jsonb_object_agg(key, case when value = 'null'::jsonb then value else pg_catalog.jsonb_set(value, '{energia}', '100'::jsonb) end) from pg_catalog.jsonb_each(p_titulares)), '{}'::jsonb),
+    'reservas', coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_set(value, '{energia}', '100'::jsonb) order by ord) from pg_catalog.jsonb_array_elements(p_reservas) with ordinality as items(value, ord)), '[]'::jsonb)
+  );
+$squad$;
+revoke all on function thc_private.fantasy_squad_full(jsonb, jsonb) from public, anon, authenticated;
+
+create or replace function public.thc_fantasy_bebidas_estado()
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $status$
+declare
+  actor uuid := auth.uid();
+  balance smallint;
+begin
+  if actor is null then raise exception 'Inicia sesion para consultar las Bebidas THC.' using errcode = '42501'; end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(actor::text, 456710));
+  insert into thc_private.fantasy_bebidas (user_id) values (actor) on conflict (user_id) do nothing;
+  select bebidas into balance from thc_private.fantasy_bebidas where user_id = actor;
+  return pg_catalog.jsonb_build_object('bebidas', balance);
+end;
+$status$;
+
+create or replace function public.thc_fantasy_guardar(p_partida jsonb, p_energia_revision bigint default 0)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $save$
+declare
+  actor uuid := auth.uid();
+  previous public.fantasy_partidas%rowtype;
+  saved public.fantasy_partidas%rowtype;
+  player jsonb;
+  squad_count integer := 0;
+  player_ids text[] := array[]::text[];
+  first_round integer;
+begin
+  if actor is null then raise exception 'Inicia sesion para guardar tu carrera.' using errcode = '42501'; end if;
+  if p_energia_revision is null or p_energia_revision < 0 then raise exception 'Revision de energia invalida.' using errcode = '22023'; end if;
+  if p_partida is null or pg_catalog.jsonb_typeof(p_partida) <> 'object' or pg_catalog.octet_length(p_partida::text) > 1048576 then raise exception 'Partida invalida.' using errcode = '22023'; end if;
+  if not coalesce(
+    pg_catalog.jsonb_typeof(p_partida->'titulares') = 'object'
+    and pg_catalog.jsonb_typeof(p_partida->'reservas') = 'array'
+    and pg_catalog.jsonb_typeof(p_partida->'fixture') = 'array'
+    and pg_catalog.jsonb_typeof(p_partida->'standings') = 'object'
+    and pg_catalog.jsonb_typeof(p_partida->'jornada_actual') = 'number'
+    and (p_partida->>'jornada_actual') ~ '^[0-9]+$'
+    and pg_catalog.length(pg_catalog.btrim(p_partida->>'club_id')) between 1 and 100
+    and pg_catalog.length(pg_catalog.btrim(p_partida->>'club_nombre')) between 1 and 150
+    and pg_catalog.length(pg_catalog.btrim(p_partida->>'liga')) between 1 and 50
+    and (p_partida->>'tactica') in ('4-3-3 OFENSIVO', '4-4-2 CLASICO', '4-4-2 CLÁSICO', '3-5-2 POSESION', '3-5-2 POSESIÓN', '3-4-3 TOTAL'), false
+  ) then raise exception 'La estructura de la carrera no es valida.' using errcode = '22023'; end if;
+  first_round := (p_partida->>'jornada_actual')::integer;
+  if pg_catalog.jsonb_array_length(p_partida->'fixture') not between 1 and 64 or first_round >= pg_catalog.jsonb_array_length(p_partida->'fixture') or pg_catalog.jsonb_array_length(p_partida->'reservas') > 100 then raise exception 'Calendario o plantilla invalidos.' using errcode = '22023'; end if;
+  for player in select value from pg_catalog.jsonb_each(p_partida->'titulares') where value <> 'null'::jsonb union all select value from pg_catalog.jsonb_array_elements(p_partida->'reservas') loop
+    if not coalesce(
+      pg_catalog.jsonb_typeof(player) = 'object'
+      and pg_catalog.jsonb_typeof(player->'id') = 'string'
+      and pg_catalog.length(player->>'id') between 1 and 100
+      and pg_catalog.jsonb_typeof(player->'name') = 'string'
+      and pg_catalog.length(player->>'name') between 1 and 150
+      and pg_catalog.jsonb_typeof(player->'pos') = 'string'
+      and pg_catalog.jsonb_typeof(player->'grl') = 'number'
+      and pg_catalog.jsonb_typeof(player->'energia') = 'number', false
+    ) then raise exception 'Jugador invalido.' using errcode = '22023'; end if;
+    if (player->>'grl')::numeric not between 0 and 100 or (player->>'energia')::numeric not between 0 and 100 or (player->>'id') = any(player_ids) then raise exception 'Energia o jugador duplicado invalido.' using errcode = '22023'; end if;
+    player_ids := pg_catalog.array_append(player_ids, player->>'id');
+    squad_count := squad_count + 1;
+  end loop;
+  if squad_count not between 1 and 100 then raise exception 'Plantilla vacia o demasiado grande.' using errcode = '22023'; end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(actor::text, 456710));
+  select * into previous from public.fantasy_partidas where user_id = actor for update;
+  if found and previous.energia_revision <> p_energia_revision then raise exception 'La energia cambio en otra pestana. Recarga tu carrera.' using errcode = '40001'; end if;
+  if previous.id is null and p_energia_revision <> 0 then raise exception 'La carrera cambio. Recarga antes de continuar.' using errcode = '40001'; end if;
+  insert into public.fantasy_partidas (user_id, club_id, club_nombre, liga, jornada_actual, tactica, titulares, reservas, fixture, standings, actualizado_en)
+  values (actor, p_partida->>'club_id', p_partida->>'club_nombre', p_partida->>'liga', first_round, p_partida->>'tactica', p_partida->'titulares', p_partida->'reservas', p_partida->'fixture', p_partida->'standings', now())
+  on conflict (user_id) do update set club_id = excluded.club_id, club_nombre = excluded.club_nombre, liga = excluded.liga, jornada_actual = excluded.jornada_actual, tactica = excluded.tactica, titulares = excluded.titulares, reservas = excluded.reservas, fixture = excluded.fixture, standings = excluded.standings, actualizado_en = excluded.actualizado_en
+  returning * into saved;
+  return pg_catalog.jsonb_build_object('id', saved.id, 'energia_revision', saved.energia_revision);
+end;
+$save$;
+
+create or replace function public.thc_fantasy_usar_bebida(p_solicitud_id uuid, p_energia_revision bigint default 0)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $consume$
+declare
+  actor uuid := auth.uid();
+  career public.fantasy_partidas%rowtype;
+  previous_use thc_private.fantasy_bebida_usos%rowtype;
+  balance smallint;
+  recovered jsonb;
+  player jsonb;
+  tired boolean := false;
+begin
+  if actor is null then raise exception 'Inicia sesion para usar una Bebida THC.' using errcode = '42501'; end if;
+  if p_solicitud_id is null or p_energia_revision is null or p_energia_revision < 0 then raise exception 'Solicitud invalida.' using errcode = '22023'; end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(actor::text, 456710));
+  insert into thc_private.fantasy_bebidas (user_id) values (actor) on conflict (user_id) do nothing;
+  select bebidas into balance from thc_private.fantasy_bebidas where user_id = actor for update;
+  select * into career from public.fantasy_partidas where user_id = actor for update;
+  if not found then raise exception 'Guarda tu carrera antes de usar la bebida.' using errcode = 'P0002'; end if;
+  select * into previous_use from thc_private.fantasy_bebida_usos where user_id = actor and solicitud_id = p_solicitud_id;
+  if found then
+    if previous_use.partida_id <> career.id then raise exception 'Ese uso pertenece a tu carrera anterior. Consulta tu saldo actual.' using errcode = 'P0001'; end if;
+    return pg_catalog.jsonb_build_object('bebidas', balance, 'energia_revision', career.energia_revision, 'titulares', career.titulares, 'reservas', career.reservas, 'reintentado', true);
+  end if;
+  if career.energia_revision <> p_energia_revision then raise exception 'La energia cambio en otra pestana. Recarga tu carrera.' using errcode = '40001'; end if;
+  if balance < 1 then raise exception 'Ya no tienes Bebidas THC.' using errcode = 'P0001'; end if;
+  if pg_catalog.jsonb_typeof(career.titulares) <> 'object' or pg_catalog.jsonb_typeof(career.reservas) <> 'array' then raise exception 'La plantilla guardada no es valida.' using errcode = '22023'; end if;
+  for player in select value from pg_catalog.jsonb_each(career.titulares) where value <> 'null'::jsonb union all select value from pg_catalog.jsonb_array_elements(career.reservas) loop
+    if pg_catalog.jsonb_typeof(player->'energia') = 'number' and (player->>'energia')::numeric < 100 then tired := true; end if;
+  end loop;
+  if not tired then raise exception 'Tu plantilla ya esta al 100%%. Conserva la bebida.' using errcode = 'P0001'; end if;
+  recovered := thc_private.fantasy_squad_full(career.titulares, career.reservas);
+  update public.fantasy_partidas set titulares = recovered->'titulares', reservas = recovered->'reservas', energia_revision = energia_revision + 1, actualizado_en = now() where user_id = actor returning * into career;
+  update thc_private.fantasy_bebidas set bebidas = bebidas - 1 where user_id = actor returning bebidas into balance;
+  insert into thc_private.fantasy_bebida_usos (user_id, solicitud_id, partida_id) values (actor, p_solicitud_id, career.id);
+  return pg_catalog.jsonb_build_object('bebidas', balance, 'energia_revision', career.energia_revision, 'titulares', career.titulares, 'reservas', career.reservas, 'reintentado', false);
+end;
+$consume$;
+
+revoke all on function public.thc_fantasy_bebidas_estado() from public, anon;
+revoke all on function public.thc_fantasy_guardar(jsonb, bigint) from public, anon;
+revoke all on function public.thc_fantasy_usar_bebida(uuid, bigint) from public, anon;
+grant execute on function public.thc_fantasy_bebidas_estado() to authenticated;
+grant execute on function public.thc_fantasy_guardar(jsonb, bigint) to authenticated;
+grant execute on function public.thc_fantasy_usar_bebida(uuid, bigint) to authenticated;
+
+alter table public.fantasy_partidas enable row level security;
+drop policy if exists thc_owner_boundary on public.fantasy_partidas;
+create policy thc_owner_boundary on public.fantasy_partidas as restrictive for all to public
+  using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
+do $permissions$
+declare
+  target_column text;
+begin
+  if not exists (select 1 from pg_catalog.pg_policies where schemaname = 'public' and tablename = 'fantasy_partidas' and policyname = 'thc_owner_read') then
+    create policy thc_owner_read on public.fantasy_partidas for select to authenticated using ((select auth.uid()) = user_id);
+  end if;
+  if not exists (select 1 from pg_catalog.pg_policies where schemaname = 'public' and tablename = 'fantasy_partidas' and policyname = 'thc_fantasy_owner_delete') then
+    create policy thc_fantasy_owner_delete on public.fantasy_partidas for delete to authenticated using ((select auth.uid()) = user_id);
+  end if;
+  revoke insert, update on public.fantasy_partidas from public, anon, authenticated;
+  for target_column in select attname from pg_catalog.pg_attribute where attrelid = 'public.fantasy_partidas'::regclass and attnum > 0 and not attisdropped loop
+    execute pg_catalog.format('revoke insert (%I), update (%I) on public.fantasy_partidas from public, anon, authenticated', target_column, target_column);
+  end loop;
+end;
+$permissions$;
+grant select, delete on public.fantasy_partidas to authenticated;
+
+-- DT Fantasy / TOPS. Instalar despues de dt_fantasy_bebidas.sql.
+-- El archivo ComandosSQL_DTFantasyTOPS.txt incluye ambas partes en orden.
+-- Los resultados anteriores a esta instalacion no conceden rayos retroactivos.
+-- El motor del partido sigue en el navegador: este parche garantiza identidad,
+-- transacciones y cobro unico, pero NO certifica un resultado contra trampas.
+do $requirements$
+begin
+  if pg_catalog.to_regprocedure('public.thc_fantasy_guardar(jsonb,bigint)') is null then
+    raise exception 'Instala primero dt_fantasy_bebidas.sql o utiliza ComandosSQL_DTFantasyTOPS.txt completo.';
+  end if;
+end;
+$requirements$;
+
+create schema if not exists thc_private;
+revoke all on schema thc_private from public, anon, authenticated;
+
+create table if not exists thc_private.fantasy_rayos (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  rayos bigint not null default 0,
+  victorias integer not null default 0 check (victorias >= 0),
+  empates integer not null default 0 check (empates >= 0),
+  derrotas integer not null default 0 check (derrotas >= 0),
+  actualizado_en timestamptz not null default now()
+);
+create table if not exists thc_private.fantasy_carreras_rayos (
+  partida_id uuid primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  creado_en timestamptz not null default now()
+);
+create table if not exists thc_private.fantasy_resultados_rayos (
+  partida_id uuid not null references thc_private.fantasy_carreras_rayos(partida_id),
+  jornada smallint not null check (jornada between 0 and 63),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  goles_favor smallint not null check (goles_favor between 0 and 30),
+  goles_contra smallint not null check (goles_contra between 0 and 30),
+  rayos smallint not null check (rayos in (-1, 0, 1, 2)),
+  historico boolean not null default false,
+  creado_en timestamptz not null default now(),
+  primary key (partida_id, jornada)
+);
+alter table thc_private.fantasy_rayos enable row level security;
+alter table thc_private.fantasy_carreras_rayos enable row level security;
+alter table thc_private.fantasy_resultados_rayos enable row level security;
+revoke all on thc_private.fantasy_rayos, thc_private.fantasy_carreras_rayos, thc_private.fantasy_resultados_rayos from public, anon, authenticated;
+create index if not exists fantasy_rayos_ranking on thc_private.fantasy_rayos (rayos desc, victorias desc, empates desc, user_id);
+
+-- Registrar las carreras actuales no cambia su progreso ni sus energias.
+insert into thc_private.fantasy_carreras_rayos(partida_id, user_id)
+select id, user_id from public.fantasy_partidas on conflict do nothing;
+insert into thc_private.fantasy_rayos(user_id)
+select user_id from public.fantasy_partidas on conflict do nothing;
+
+-- Valida la transicion ANTES de que el RPC base sobrescriba la carrera.
+-- La misma cerradura que Bebidas serializa guardados, resultados y consumos.
+create or replace function thc_private.fantasy_validar_resultado(p_user uuid, p_partida jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $validate$
+declare
+  previous public.fantasy_partidas%rowtype;
+  expected_id uuid;
+  current_round integer;
+  next_round integer;
+  r integer;
+  m integer;
+  fresh jsonb;
+  old jsonb;
+  round_data jsonb;
+  entry jsonb;
+  own_match jsonb;
+  new_own jsonb;
+  gf integer;
+  ga integer;
+  earned smallint := 0;
+  changed boolean := false;
+  own_count integer;
+  team_ids text[];
+begin
+  if p_user is null or p_user is distinct from auth.uid() then raise exception 'Sesion invalida.' using errcode = '42501'; end if;
+  if not coalesce(pg_catalog.jsonb_typeof(p_partida) = 'object' and pg_catalog.jsonb_typeof(p_partida->'fixture') = 'array' and pg_catalog.jsonb_typeof(p_partida->'standings') = 'object' and (p_partida->>'jornada_actual') ~ '^[0-9]{1,2}$', false) then
+    raise exception 'Calendario de carrera invalido.' using errcode = '22023';
+  end if;
+  if pg_catalog.jsonb_array_length(p_partida->'fixture') not between 1 and 64 then raise exception 'Calendario de carrera invalido.' using errcode = '22023'; end if;
+  next_round := (p_partida->>'jornada_actual')::integer;
+  if next_round >= pg_catalog.jsonb_array_length(p_partida->'fixture') then raise exception 'Jornada invalida.' using errcode = '22023'; end if;
+  if p_partida ? 'partida_id' then
+    if not coalesce((p_partida->>'partida_id') ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$', false) then raise exception 'Identidad de carrera invalida.' using errcode = '22023'; end if;
+    expected_id := (p_partida->>'partida_id')::uuid;
+  end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(p_user::text, 456710));
+  select * into previous from public.fantasy_partidas where user_id = p_user for update;
+  if previous.id is not null then
+    if expected_id is not null and expected_id <> previous.id then raise exception 'Esta carrera cambio en otra pestana. Recarga antes de guardar.' using errcode = '40001'; end if;
+    if previous.club_id <> p_partida->>'club_id' or previous.liga <> p_partida->>'liga' then raise exception 'No se puede cambiar el club de una carrera existente.' using errcode = '40001'; end if;
+    current_round := previous.jornada_actual;
+    if next_round < current_round or next_round > current_round + 1 then raise exception 'La jornada cambio. Recarga tu carrera.' using errcode = '40001'; end if;
+    if pg_catalog.jsonb_array_length(previous.fixture) <> pg_catalog.jsonb_array_length(p_partida->'fixture') then raise exception 'No se puede reemplazar el calendario.' using errcode = '22023'; end if;
+  else
+    if next_round <> 0 then raise exception 'Una carrera nueva comienza en la jornada 1.' using errcode = '22023'; end if;
+    if expected_id is not null and exists(select 1 from thc_private.fantasy_carreras_rayos where partida_id = expected_id) then raise exception 'Esta carrera ya termino. Vuelve a crearla desde el inicio.' using errcode = '40001'; end if;
+    current_round := 0;
+  end if;
+  select pg_catalog.array_agg(key) into team_ids from pg_catalog.jsonb_object_keys(p_partida->'standings') key;
+  if coalesce(pg_catalog.cardinality(team_ids), 0) not between 2 and 64 or not ((p_partida->>'club_id') = any(team_ids)) then raise exception 'Equipos del calendario invalidos.' using errcode = '22023'; end if;
+  if previous.id is not null and (select pg_catalog.array_agg(key order by key) from pg_catalog.jsonb_object_keys(previous.standings) key) is distinct from (select pg_catalog.array_agg(key order by key) from pg_catalog.jsonb_object_keys(p_partida->'standings') key) then raise exception 'No se pueden cambiar los equipos de la liga.' using errcode = '22023'; end if;
+  for r in 0..pg_catalog.jsonb_array_length(p_partida->'fixture') - 1 loop
+    round_data := p_partida->'fixture'->r;
+    if pg_catalog.jsonb_typeof(round_data) <> 'array' or pg_catalog.jsonb_array_length(round_data) not between 1 and 32 then raise exception 'Fecha del calendario invalida.' using errcode = '22023'; end if;
+    if previous.id is not null and pg_catalog.jsonb_array_length(previous.fixture->r) <> pg_catalog.jsonb_array_length(round_data) then raise exception 'No se puede alterar una fecha del calendario.' using errcode = '22023'; end if;
+    own_count := 0;
+    for m in 0..pg_catalog.jsonb_array_length(round_data) - 1 loop
+      fresh := round_data->m;
+      if not coalesce(pg_catalog.jsonb_typeof(fresh) = 'object' and (fresh->>'local') = any(team_ids) and (fresh->>'visitante') = any(team_ids) and fresh->>'local' <> fresh->>'visitante' and pg_catalog.jsonb_typeof(fresh->'jugado') = 'boolean', false) then raise exception 'Partido del calendario invalido.' using errcode = '22023'; end if;
+      if (fresh->>'jugado')::boolean then
+        if not coalesce(pg_catalog.jsonb_typeof(fresh->'gl') = 'number' and pg_catalog.jsonb_typeof(fresh->'gv') = 'number' and (fresh->>'gl') ~ '^[0-9]{1,2}$' and (fresh->>'gv') ~ '^[0-9]{1,2}$', false) or (fresh->>'gl')::integer > 30 or (fresh->>'gv')::integer > 30 then raise exception 'Marcador invalido.' using errcode = '22023'; end if;
+      elsif coalesce(fresh->'gl', 'null'::jsonb) <> 'null'::jsonb or coalesce(fresh->'gv', 'null'::jsonb) <> 'null'::jsonb then raise exception 'Un partido pendiente no puede tener marcador.' using errcode = '22023';
+      end if;
+      if fresh->>'local' = p_partida->>'club_id' or fresh->>'visitante' = p_partida->>'club_id' then
+        own_count := own_count + 1;
+        if r = current_round then new_own := fresh; end if;
+      end if;
+      if previous.id is null then
+        if (fresh->>'jugado')::boolean then raise exception 'No se pueden importar resultados a una carrera nueva.' using errcode = '22023'; end if;
+      else
+        old := previous.fixture->r->m;
+        if old->>'local' is distinct from fresh->>'local' or old->>'visitante' is distinct from fresh->>'visitante' then raise exception 'Los cruces del calendario no se pueden cambiar.' using errcode = '22023'; end if;
+        if (old->>'jugado')::boolean then
+          if not (fresh->>'jugado')::boolean or old->>'gl' is distinct from fresh->>'gl' or old->>'gv' is distinct from fresh->>'gv' then raise exception 'Un resultado terminado no se puede reescribir.' using errcode = '40001'; end if;
+        elsif (fresh->>'jugado')::boolean then
+          if r <> current_round or next_round <> current_round then raise exception 'Solo se puede registrar la fecha actual.' using errcode = '22023'; end if;
+          changed := true;
+        end if;
+        if r = current_round and (old->>'local' = previous.club_id or old->>'visitante' = previous.club_id) then own_match := old; end if;
+      end if;
+    end loop;
+    if own_count > 1 then raise exception 'El club solo puede jugar un partido por jornada.' using errcode = '22023'; end if;
+  end loop;
+  if previous.id is not null then
+    if next_round > current_round and own_match is not null and not (own_match->>'jugado')::boolean then raise exception 'Completa el partido antes de avanzar de fecha.' using errcode = '22023'; end if;
+    if changed and (own_match is null or (own_match->>'jugado')::boolean or not coalesce((new_own->>'jugado')::boolean, false)) then raise exception 'El resultado de tu club no coincide con la fecha.' using errcode = '22023'; end if;
+    if changed and exists(select 1 from pg_catalog.jsonb_array_elements(p_partida->'fixture'->current_round) item where not (item->>'jugado')::boolean) then raise exception 'La fecha debe guardarse completa.' using errcode = '22023'; end if;
+    if changed then
+      gf := case when new_own->>'local' = previous.club_id then (new_own->>'gl')::integer else (new_own->>'gv')::integer end;
+      ga := case when new_own->>'local' = previous.club_id then (new_own->>'gv')::integer else (new_own->>'gl')::integer end;
+      earned := case when gf > ga then 2 when gf = ga then 1 else -1 end;
+    end if;
+  end if;
+  return pg_catalog.jsonb_build_object('partida_id', coalesce(previous.id, expected_id, pg_catalog.gen_random_uuid()), 'jornada', current_round, 'registrar', changed, 'goles_favor', gf, 'goles_contra', ga, 'rayos', earned);
+end;
+$validate$;
+
+-- standings se reconstruye desde los marcadores: no acepta puntos inventados.
+create or replace function thc_private.fantasy_tabla(p_fixture jsonb, p_teams jsonb)
+returns jsonb
+language plpgsql
+immutable
+set search_path = ''
+as $table$
+declare
+  result jsonb := '{}'::jsonb;
+  team record;
+  game jsonb;
+  side text;
+  gf integer;
+  ga integer;
+  entry jsonb;
+begin
+  for team in select * from pg_catalog.jsonb_each(p_teams) loop
+    if pg_catalog.jsonb_typeof(team.value) <> 'object' or team.value->>'id' is distinct from team.key or pg_catalog.length(coalesce(team.value->>'name', '')) not between 1 and 150 then raise exception 'Equipo de clasificacion invalido.' using errcode = '22023'; end if;
+    result := pg_catalog.jsonb_set(result, array[team.key], (team.value - array['pj','pg','pe','pp','gf','gc','pts','dg']) || '{"pj":0,"pg":0,"pe":0,"pp":0,"gf":0,"gc":0,"pts":0,"dg":0}'::jsonb);
+  end loop;
+  for game in select items.value from pg_catalog.jsonb_array_elements(p_fixture) rounds(round_data) cross join lateral pg_catalog.jsonb_array_elements(rounds.round_data) items(value) loop
+    if (game->>'jugado')::boolean then
+      foreach side in array array['local','visitante'] loop
+        gf := (game->>case when side = 'local' then 'gl' else 'gv' end)::integer;
+        ga := (game->>case when side = 'local' then 'gv' else 'gl' end)::integer;
+        entry := result->(game->>side);
+        entry := entry || pg_catalog.jsonb_build_object('pj', (entry->>'pj')::integer + 1, 'pg', (entry->>'pg')::integer + case when gf > ga then 1 else 0 end, 'pe', (entry->>'pe')::integer + case when gf = ga then 1 else 0 end, 'pp', (entry->>'pp')::integer + case when gf < ga then 1 else 0 end, 'gf', (entry->>'gf')::integer + gf, 'gc', (entry->>'gc')::integer + ga, 'pts', (entry->>'pts')::integer + case when gf > ga then 3 when gf = ga then 1 else 0 end, 'dg', (entry->>'dg')::integer + gf - ga);
+        result := pg_catalog.jsonb_set(result, array[game->>side], entry);
+      end loop;
+    end if;
+  end loop;
+  return result;
+end;
+$table$;
+
+create or replace function public.thc_fantasy_tops(p_offset integer default 0, p_limite integer default 25)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $tops$
+declare
+  actor uuid := auth.uid();
+  listing jsonb;
+  mine jsonb;
+  total bigint;
+begin
+  if actor is null then raise exception 'Inicia sesion para ver TOPS.' using errcode = '42501'; end if;
+  if p_offset is null or p_offset < 0 or p_limite is null or p_limite not between 1 and 50 then raise exception 'Pagina de TOPS invalida.' using errcode = '22023'; end if;
+  select count(*) into total from thc_private.fantasy_rayos;
+  with ranked as (
+    select r.*, pg_catalog.row_number() over(order by r.rayos desc, r.victorias desc, r.empates desc, r.user_id) as posicion
+    from thc_private.fantasy_rayos r
+  ), page as (
+    select r.posicion, r.rayos, r.victorias, r.empates, r.derrotas,
+      case when coalesce(p.perfil_publico, false) or r.user_id = actor then r.user_id else null end as perfil_id,
+      case when coalesce(p.perfil_publico, false) or r.user_id = actor then coalesce(nullif(pg_catalog.btrim(p.apodo), ''), nullif(pg_catalog.btrim(p.discord_nombre), ''), 'Manager THC') else 'Perfil privado' end as nombre,
+      case when coalesce(p.perfil_publico, false) or r.user_id = actor then p.avatar_url else null end as avatar_url,
+      r.user_id = actor as soy_yo
+    from ranked r left join public.perfiles p on p.id = r.user_id
+    order by r.posicion offset p_offset limit p_limite
+  ) select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(page) order by posicion), '[]'::jsonb) into listing from page;
+  with ranked as (
+    select r.*, pg_catalog.row_number() over(order by r.rayos desc, r.victorias desc, r.empates desc, r.user_id) as posicion from thc_private.fantasy_rayos r
+  ) select pg_catalog.jsonb_build_object('posicion', posicion, 'rayos', rayos, 'victorias', victorias, 'empates', empates, 'derrotas', derrotas) into mine from ranked where user_id = actor;
+  return pg_catalog.jsonb_build_object('jugadores', listing, 'yo', mine, 'total', total, 'offset', p_offset, 'limite', p_limite);
+end;
+$tops$;
+
+-- BEGIN GENERATED GUARDED CAREER SAVE
+create or replace function public.thc_fantasy_guardar(p_partida jsonb, p_energia_revision bigint default 0)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $save$
+declare
+  actor uuid := auth.uid();
+  previous public.fantasy_partidas%rowtype;
+  saved public.fantasy_partidas%rowtype;
+  player jsonb;
+  squad_count integer := 0;
+  player_ids text[] := array[]::text[];
+  first_round integer;
+  transition_data jsonb;
+  rayos_delta smallint := 0;
+  rayos_total bigint;
+begin
+  if actor is null then raise exception 'Inicia sesion para guardar tu carrera.' using errcode = '42501'; end if;
+  if p_energia_revision is null or p_energia_revision < 0 then raise exception 'Revision de energia invalida.' using errcode = '22023'; end if;
+  if p_partida is null or pg_catalog.jsonb_typeof(p_partida) <> 'object' or pg_catalog.octet_length(p_partida::text) > 1048576 then raise exception 'Partida invalida.' using errcode = '22023'; end if;
+  if not coalesce(
+    pg_catalog.jsonb_typeof(p_partida->'titulares') = 'object'
+    and pg_catalog.jsonb_typeof(p_partida->'reservas') = 'array'
+    and pg_catalog.jsonb_typeof(p_partida->'fixture') = 'array'
+    and pg_catalog.jsonb_typeof(p_partida->'standings') = 'object'
+    and pg_catalog.jsonb_typeof(p_partida->'jornada_actual') = 'number'
+    and (p_partida->>'jornada_actual') ~ '^[0-9]+$'
+    and pg_catalog.length(pg_catalog.btrim(p_partida->>'club_id')) between 1 and 100
+    and pg_catalog.length(pg_catalog.btrim(p_partida->>'club_nombre')) between 1 and 150
+    and pg_catalog.length(pg_catalog.btrim(p_partida->>'liga')) between 1 and 50
+    and (p_partida->>'tactica') in ('4-3-3 OFENSIVO', '4-4-2 CLASICO', '4-4-2 CLÁSICO', '3-5-2 POSESION', '3-5-2 POSESIÓN', '3-4-3 TOTAL'), false
+  ) then raise exception 'La estructura de la carrera no es valida.' using errcode = '22023'; end if;
+  first_round := (p_partida->>'jornada_actual')::integer;
+  if pg_catalog.jsonb_array_length(p_partida->'fixture') not between 1 and 64 or first_round >= pg_catalog.jsonb_array_length(p_partida->'fixture') or pg_catalog.jsonb_array_length(p_partida->'reservas') > 100 then raise exception 'Calendario o plantilla invalidos.' using errcode = '22023'; end if;
+  for player in select value from pg_catalog.jsonb_each(p_partida->'titulares') where value <> 'null'::jsonb union all select value from pg_catalog.jsonb_array_elements(p_partida->'reservas') loop
+    if not coalesce(
+      pg_catalog.jsonb_typeof(player) = 'object'
+      and pg_catalog.jsonb_typeof(player->'id') = 'string'
+      and pg_catalog.length(player->>'id') between 1 and 100
+      and pg_catalog.jsonb_typeof(player->'name') = 'string'
+      and pg_catalog.length(player->>'name') between 1 and 150
+      and pg_catalog.jsonb_typeof(player->'pos') = 'string'
+      and pg_catalog.jsonb_typeof(player->'grl') = 'number'
+      and pg_catalog.jsonb_typeof(player->'energia') = 'number', false
+    ) then raise exception 'Jugador invalido.' using errcode = '22023'; end if;
+    if (player->>'grl')::numeric not between 0 and 100 or (player->>'energia')::numeric not between 0 and 100 or (player->>'id') = any(player_ids) then raise exception 'Energia o jugador duplicado invalido.' using errcode = '22023'; end if;
+    player_ids := pg_catalog.array_append(player_ids, player->>'id');
+    squad_count := squad_count + 1;
+  end loop;
+  if squad_count not between 1 and 100 then raise exception 'Plantilla vacia o demasiado grande.' using errcode = '22023'; end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(actor::text, 456710));
+  select * into previous from public.fantasy_partidas where user_id = actor for update;
+  if found and previous.energia_revision <> p_energia_revision then raise exception 'La energia cambio en otra pestana. Recarga tu carrera.' using errcode = '40001'; end if;
+  if previous.id is null and p_energia_revision <> 0 then raise exception 'La carrera cambio. Recarga antes de continuar.' using errcode = '40001'; end if;
+  transition_data := thc_private.fantasy_validar_resultado(actor, p_partida);
+  p_partida := pg_catalog.jsonb_set(p_partida, '{standings}', thc_private.fantasy_tabla(p_partida->'fixture', p_partida->'standings'));
+  insert into thc_private.fantasy_carreras_rayos(partida_id, user_id) values ((transition_data->>'partida_id')::uuid, actor) on conflict do nothing;
+  insert into thc_private.fantasy_rayos(user_id) values(actor) on conflict do nothing;
+  insert into public.fantasy_partidas (id, user_id, club_id, club_nombre, liga, jornada_actual, tactica, titulares, reservas, fixture, standings, actualizado_en)
+  values ((transition_data->>'partida_id')::uuid, actor, p_partida->>'club_id', p_partida->>'club_nombre', p_partida->>'liga', first_round, p_partida->>'tactica', p_partida->'titulares', p_partida->'reservas', p_partida->'fixture', p_partida->'standings', now())
+  on conflict (user_id) do update set club_id = excluded.club_id, club_nombre = excluded.club_nombre, liga = excluded.liga, jornada_actual = excluded.jornada_actual, tactica = excluded.tactica, titulares = excluded.titulares, reservas = excluded.reservas, fixture = excluded.fixture, standings = excluded.standings, actualizado_en = excluded.actualizado_en
+  returning * into saved;
+  if (transition_data->>'registrar')::boolean then
+    insert into thc_private.fantasy_resultados_rayos(partida_id, jornada, user_id, goles_favor, goles_contra, rayos)
+    values(saved.id, (transition_data->>'jornada')::smallint, actor, (transition_data->>'goles_favor')::smallint, (transition_data->>'goles_contra')::smallint, (transition_data->>'rayos')::smallint)
+    on conflict do nothing returning rayos into rayos_delta;
+    rayos_delta := coalesce(rayos_delta, 0);
+    if rayos_delta <> 0 then
+      update thc_private.fantasy_rayos set rayos = rayos + rayos_delta,
+        victorias = victorias + case when rayos_delta = 2 then 1 else 0 end,
+        empates = empates + case when rayos_delta = 1 then 1 else 0 end,
+        derrotas = derrotas + case when rayos_delta = -1 then 1 else 0 end,
+        actualizado_en = now() where user_id = actor;
+    end if;
+  end if;
+  select rayos into rayos_total from thc_private.fantasy_rayos where user_id = actor;
+  return pg_catalog.jsonb_build_object('id', saved.id, 'energia_revision', saved.energia_revision, 'rayos_delta', rayos_delta, 'rayos', rayos_total);
+end;
+$save$;
+-- END GENERATED GUARDED CAREER SAVE
+
+revoke all on function thc_private.fantasy_validar_resultado(uuid,jsonb) from public, anon, authenticated;
+revoke all on function thc_private.fantasy_tabla(jsonb,jsonb) from public, anon, authenticated;
+revoke all on function public.thc_fantasy_tops(integer,integer) from public, anon;
+grant execute on function public.thc_fantasy_tops(integer,integer) to authenticated;
+revoke all on function public.thc_fantasy_guardar(jsonb,bigint) from public, anon;
+grant execute on function public.thc_fantasy_guardar(jsonb,bigint) to authenticated;
+
+commit;
+notify pgrst, 'reload schema';

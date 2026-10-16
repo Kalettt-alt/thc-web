@@ -17,6 +17,8 @@ const snapshot = state => ({
   goalEvent: state.goalEvent ? { ...state.goalEvent, score: [...state.goalEvent.score] } : null,
   opportunities: { user: { ...state.opportunities.user }, rival: { ...state.opportunities.rival } },
   activeSeconds: Math.floor(state.clockMs / 1000), half: state.half,
+  setPiece: state.setPiece ? { kind: state.setPiece.kind, routine: state.setPiece.routine } : null,
+  playStyle: state.lastPlayType,
   playerStats: Object.fromEntries(state.players.map(player => [statKey(player), getPlayerStats(state, player)]))
 });
 

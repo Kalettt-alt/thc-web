@@ -42,7 +42,7 @@ test('one GRL point keeps equal opportunities, ten gives a moderate advantage an
   assert.ok(createMatchOpportunities(squad(85, 85, 15)).user.limit < createMatchOpportunities(squad(85, 85)).user.limit);
 });
 
-test('shots consume spaced opportunities once; repeated human swipes cannot exceed seven and passing remains available', () => {
+test('ordinary AI windows stay bounded but the manager can still shoot after the last scheduled chance', () => {
   const shooter = player('shooter', true, 3000, 700, 'ATT', 99);
   const receiver = player('receiver', true, 4100, 2200, 'MID', 99);
   const rival = player('rival', false, 1100, 7000, 'DEF', 55);
@@ -64,9 +64,13 @@ test('shots consume spaced opportunities once; repeated human swipes cannot exce
   state.clockMs = MATCH_DURATION_MS - 100;
   state.phase = 'WAITING_USER_INPUT';
   state.ball.owner = shooter.id;
-  assert.equal(applyMatchInput(state, shooter, { x: 0, y: -1200 }, { isDrag: true }), false);
-  assert.match(state.msg, /BUSCA EL PASE/);
-  assert.equal(state.ball.owner, shooter.id);
+  assert.equal(applyMatchInput(state, shooter, { x: 0, y: -1200 }, { isDrag: true }), true);
+  assert.equal(state.phase, 'BALL_FLIGHT');
+  assert.equal(state.ball.owner, null);
+  assert.equal(state.opportunities.user.attempts, 8);
+  assert.equal(state.opportunities.user.extraAttempts, 1);
+  state.phase = 'WAITING_USER_INPUT';
+  state.ball.owner = shooter.id;
   assert.equal(applyMatchInput(state, receiver, { x: 0, y: 0 }, { isDrag: false }), true);
   assert.equal(state.ball.targetId, receiver.id);
   assert.equal(state.opportunities.user.used, 7);
@@ -191,6 +195,7 @@ test('support moves into different open lanes while retaining exactly one defens
   const team = squad();
   const owner = team.find(p => p.isUser && p.slot === 'mc1');
   Object.assign(owner, { x: 2500, y: 4400 });
+  for (const opponent of team.filter(p => !p.isUser)) opponent.y = 7000;
   const ball = { x: owner.x, y: owner.y, owner: owner.id };
   const early = buildTacticalTargets(team, ball, owner, {}, 'NORMAL', 0);
   const later = buildTacticalTargets(team, ball, owner, {}, 'NORMAL', 4000);
@@ -217,7 +222,7 @@ test('a recovery refreshes only the user team, preserves match data and an old r
   assert.equal(restoreMatchEnergy(state).ok, false);
 });
 
-test('seeded complete matches stay finite, finish at three active minutes, use the appropriate shot budgets and convert neither all nor none', () => {
+test('seeded complete matches stay finite, finish at three active minutes and record actual shots beyond scheduled windows', () => {
   let attempts = 0;
   let goals = 0;
   for (const [a, b] of [[84, 85], [85, 75], [95, 70]]) for (const seed of [1, 3, 7, 11]) {
@@ -233,10 +238,11 @@ test('seeded complete matches stay finite, finish at three active minutes, use t
     for (const key of ['user', 'rival']) {
       assert.ok(state.opportunities[key].used <= state.opportunities[key].limit);
       const shots = Object.values(state.playerStats).filter(p => p.isUser === (key === 'user')).reduce((sum, p) => sum + p.shots, 0);
-      assert.equal(shots, state.opportunities[key].used);
+      assert.equal(shots, state.opportunities[key].attempts);
+      assert.equal(shots, state.opportunities[key].used + state.opportunities[key].extraAttempts);
       attempts += shots;
     }
-    assert.ok(state.score.every(value => value <= 7));
+    assert.ok(state.score.every(value => value < 12));
     goals += state.score[0] + state.score[1];
     assert.ok(state.players.every(p => Number.isFinite(p.x) && Number.isFinite(p.y)));
   }

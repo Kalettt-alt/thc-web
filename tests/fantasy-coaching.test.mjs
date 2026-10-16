@@ -136,18 +136,22 @@ test('fitness changes only match copies and elapsed playing time, with tired pla
 });
 
 test('AI can recycle to support, switch wings, attempt a wall or carry instead of forcing a forward', () => {
-  const state = stateFixture();
-  const owner = state.players.find(p => p.slot === 'mc1');
-  owner.x = 3000; owner.y = 4500;
-  const recycle = chooseAiPlay(state.players, owner, { pressure: 200, random: () => 0.2 });
+  const player = (id, x, y, isUser = true) => ({ id, x, y, isUser, isGK: false, role: 'MID' });
+  const owner = player('owner', 3000, 4500);
+  const back = player('back', 3000, 5600);
+  const recycle = chooseAiPlay([owner, back, player('press', 3050, 4400, false)], owner, { pressure: 200, random: () => 0.2 });
   assert.equal(recycle.type, 'PASS');
   assert.equal(recycle.style, 'RECYCLE');
-  const switched = chooseAiPlay(state.players, owner, { pressure: 800, random: () => 0.9 });
+  const wide = player('wide', 1000, 3500);
+  const opposite = player('opposite', 4500, 3000);
+  const switched = chooseAiPlay([wide, opposite, player('block1', 1100, 2500, false), player('block2', 1400, 3000, false)], wide, { pressure: 800, random: () => 0.9 });
   assert.equal(switched.style, 'SWITCH');
-  const support = state.players.find(p => p.slot === 'mc2');
-  const wall = chooseAiPlay(state.players, owner, { pressure: 700, returnToId: support.id, random: () => 0.2 });
+  assert.equal(switched.target.id, opposite.id);
+  const support = player('support', 4100, 4700);
+  const wall = chooseAiPlay([owner, support], owner, { pressure: 700, returnToId: support.id, random: () => 0.2 });
   assert.equal(wall.style, 'WALL');
-  const carry = chooseAiPlay(state.players, owner, { pressure: 1000, random: () => 0.3 });
+  assert.equal(wall.target.id, support.id);
+  const carry = chooseAiPlay([owner, back], owner, { pressure: 1000, random: () => 0.3 });
   assert.equal(carry.type, 'DRIBBLE');
 });
 

@@ -13,11 +13,11 @@ end $requirements$;
 alter table public.ut_online_partidas drop constraint if exists ut_online_v2_duration;
 alter table public.ut_online_partidas drop constraint if exists ut_online_v3_duration;
 alter table public.ut_online_partidas add constraint ut_online_v3_duration check(
-  ends_at=started_at+case simulation_version when 3 then interval '132 seconds' when 2 then interval '192 seconds' else interval '180 seconds' end);
+  case when simulation_version=4 then extract(epoch from ends_at-started_at) in(140,142,144,146,148) else ends_at=started_at+case simulation_version when 3 then interval '132 seconds' when 2 then interval '192 seconds' else interval '180 seconds' end end);
 alter table public.ut_online_partidas drop constraint if exists ut_online_v2_cursor;
 alter table public.ut_online_partidas drop constraint if exists ut_online_v3_cursor;
 alter table public.ut_online_partidas add constraint ut_online_v3_cursor check(
-  simulation_version in (1,2,3) and active_seconds between 0 and case when simulation_version=3 then 120 else 180 end);
+  simulation_version in (1,2,3,4) and active_seconds between 0 and case when simulation_version=4 then 136 when simulation_version=3 then 120 else 180 end);
 create or replace function thc_private.ut_online_duration(p_version integer)
 returns integer language sql immutable set search_path='' as $fn$
   select case when p_version>=3 then 120 else 180 end;

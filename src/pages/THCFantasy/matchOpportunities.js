@@ -11,7 +11,7 @@ export function teamMatchStrength(players, isUser) {
 export function createMatchOpportunities(players) {
   const difference = teamMatchStrength(players, true) - teamMatchStrength(players, false);
   const adjustment = Math.abs(difference) < 6 ? 0 : Math.abs(difference) < 18 ? Math.sign(difference) : 2 * Math.sign(difference);
-  const entry = limit => ({ limit: clamp(limit, 3, MAX_MATCH_OPPORTUNITIES), used: 0, nextAtMs: 0 });
+  const entry = limit => ({ limit: clamp(limit, 3, MAX_MATCH_OPPORTUNITIES), used: 0, attempts: 0, extraAttempts: 0, nextAtMs: 0 });
   return { user: entry(5 + adjustment), rival: entry(5 - adjustment) };
 }
 
@@ -20,10 +20,15 @@ export function canUseMatchOpportunity(state, isUser) {
   return !entry || (entry.used < entry.limit && state.clockMs + 0.001 >= entry.nextAtMs);
 }
 
-export function consumeMatchOpportunity(state, isUser) {
+// These windows pace ordinary AI attacks. They are never a restriction on a
+// manager's shot, or on an unmistakable open-goal chance in the penalty area.
+export function consumeMatchOpportunity(state, isUser, { freelyChosen = false } = {}) {
   state.opportunities ||= createMatchOpportunities(state.players);
-  if (!canUseMatchOpportunity(state, isUser)) return false;
+  const available = canUseMatchOpportunity(state, isUser);
+  if (!available && !freelyChosen) return false;
   const entry = state.opportunities[isUser ? 'user' : 'rival'];
+  entry.attempts = (entry.attempts || 0) + 1;
+  if (!available) { entry.extraAttempts = (entry.extraAttempts || 0) + 1; return true; }
   entry.used += 1;
   entry.nextAtMs = Math.max(state.clockMs + 9000, MATCH_DURATION_MS * entry.used / (entry.limit + 0.5));
   return true;

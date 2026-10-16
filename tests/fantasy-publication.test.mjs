@@ -4,7 +4,7 @@ import { matchPublicationKey, shouldPublishMatchState } from '../src/pages/THCFa
 import { createMatchState, resumeSecondHalf, stepMatch } from '../src/pages/THCFantasy/matchSimulation.js';
 
 test('static phases and paused coach panels do not publish each animation frame', () => {
-  for (const phase of ['READY', 'HALFTIME', 'GOAL', 'OUT', 'FINISHED', 'SIMULATING']) {
+  for (const phase of ['READY', 'HALFTIME', 'GOAL', 'FINISHED', 'SIMULATING']) {
     const state = createMatchState([]);
     state.phase = phase;
     state.isPaused = phase === 'SIMULATING';
@@ -15,7 +15,7 @@ test('static phases and paused coach panels do not publish each animation frame'
 });
 
 test('active play and the turn countdown keep thirty-per-second publication', () => {
-  for (const phase of ['SIMULATING', 'KICKOFF_SETUP', 'WAITING_USER_INPUT', 'USER_DRIVING', 'BALL_FLIGHT']) {
+  for (const phase of ['SIMULATING', 'KICKOFF_SETUP', 'GOAL_KICK', 'OUT', 'TURNOVER_PRESS', 'WAITING_USER_INPUT', 'USER_DRIVING', 'BALL_FLIGHT']) {
     const state = createMatchState([]);
     state.phase = phase;
     const key = matchPublicationKey(state);
@@ -34,7 +34,7 @@ test('phase, pause, messages and coaching commands publish immediately', () => {
   }
 });
 
-test('goal and out timers advance without repeated snapshots and publish resumed play', () => {
+test('celebrations stay still while moving restart players are published, and both resume play', () => {
   for (const phase of ['GOAL', 'OUT']) {
     const state = createMatchState([]);
     state.phase = phase;
@@ -43,7 +43,7 @@ test('goal and out timers advance without repeated snapshots and publish resumed
     const key = matchPublicationKey(state);
     stepMatch(state, 500, () => 0.5);
     assert.equal(state.transitionTimer, 500);
-    assert.equal(shouldPublishMatchState(state, key, 0, 500), false);
+    assert.equal(shouldPublishMatchState(state, key, 0, 500), phase === 'OUT');
     stepMatch(state, 500, () => 0.5);
     assert.equal(state.phase, phase === 'GOAL' ? 'KICKOFF_SETUP' : 'SIMULATING');
     assert.equal(shouldPublishMatchState(state, key, 0, 1000), true);

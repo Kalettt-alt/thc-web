@@ -147,12 +147,14 @@ try {
     await save(starter); assert.equal((await rpc('thc_ut_online_buscar', [crypto.randomUUID()])).status, 'waiting');
     await role('authenticated', users[1]); await save(starter);
     const match = await rpc('thc_ut_online_buscar', [crypto.randomUUID()]); assert.equal(match.status, 'playing'); matchId = match.match.id;
-    assert.equal(match.match.simulation_version, 3); assert.equal(match.match.duration_seconds, 120); assert.equal(match.match.halftime_seconds, 12);
-    assert.equal(Date.parse(match.match.ends_at) - Date.parse(match.match.started_at), 132000);
+    assert.equal(match.match.simulation_version, 4); assert.equal(match.match.duration_seconds, 120); assert.equal(match.match.halftime_seconds, 12);
+    assert.ok(Number.isInteger(match.match.active_duration_seconds) && match.match.active_duration_seconds >= 128 && match.match.active_duration_seconds <= 136);
+    assert.equal(match.match.active_duration_seconds % 2, 0); assert.equal(match.match.first_half_seconds * 2, match.match.active_duration_seconds);
+    assert.equal(Date.parse(match.match.ends_at) - Date.parse(match.match.started_at), (match.match.active_duration_seconds + 12) * 1000);
     await reject(() => rpc('thc_ut_reset'), '55000'); assert.equal((await query('select monedas from public.perfiles_ut'))[0].monedas, 987);
     await role('authenticated', users[0]); await reject(() => rpc('thc_ut_reset'), '55000'); assert.equal((await query('select * from public.equipos_ut')).length, 1);
   });
-  await check('reejecutar TXT con partido v3 activo conserva snapshots, recibos y relojes', async () => {
+  await check('reejecutar TXT con partido v4 activo conserva snapshots, recibos y relojes', async () => {
     await role(null);
     const games = await query('select * from public.ut_online_partidas order by id');
     const receipts = await query('select * from thc_private.ut_inicial_entregas order by user_id');
@@ -163,7 +165,7 @@ try {
     assert.deepEqual(await query('select * from public.plantillas_ut order by user_id'), squads);
   });
   await check('reset tras finalizar conserva resultado y energía autoritativos del partido', async () => {
-    await role(null); await query("update public.ut_online_partidas set started_at=now()-interval '133 seconds',ends_at=now()-interval '1 second' where id=$1", [matchId]);
+    await role(null); await query("update public.ut_online_partidas set started_at=now()-(ends_at-started_at)-interval '1 second',ends_at=now()-interval '1 second' where id=$1", [matchId]);
     await role('authenticated', users[0]); assert.equal(await rpc('thc_ut_reset'), users[0]);
     assert.equal((await query('select id from public.ut_online_partidas'))[0].id, matchId);
     assert.equal((await query('select * from public.ut_online_energia')).length, 11);

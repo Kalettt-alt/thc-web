@@ -1,21 +1,51 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
-import { ArrowLeft, ArrowRight, ChevronLeft, ChevronRight, Users, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ArrowUpRight, Check, ChevronLeft, ChevronRight, Gamepad2, Radio, ScanLine, Shield, Timer, Wifi, X } from 'lucide-react';
 import { supabase } from '../../utils/supabase';
 import { EQUIPOS_DATA } from './JugadoresUT';
 import { normalizePlayerList } from './utValidation';
 import { repairSquad, validateStartingSquad } from './squadUT';
 import ClubIdentityLogoUT from './ClubIdentityLogoUT';
 import { createOfflineMatch, practiceTeamSnapshot, teamSimulationMetrics } from './simulationUT';
-import { cancelOnlineQueue, getOnlineStatus, heartbeatOnlineQueue, joinOnlineQueue, updateOnlineTactics, ONLINE_POLL_MS } from './onlineUT';
+import { cancelOnlineQueue, getOnlineStatus, heartbeatOnlineQueue, joinOnlineQueue, updateOnlineTactics, ONLINE_GRL_RANGE, ONLINE_POLL_MS } from './onlineUT';
 import MatchSimulationUT from './MatchSimulationUT';
 import { dismissOnlineMatch, readDismissedOnlineMatchId } from './onlineResultSeenUT';
+import { validOnlineMatchUT } from './onlineMatchValidationUT';
 import './PlayUT.css';
 
 const normalizeSquad = value => value ? { ...value, titulares: normalizePlayerList(value.titulares, 11), suplentes: normalizePlayerList(value.suplentes, 7), reservas: normalizePlayerList(value.reservas, 100) } : null;
 const unavailable = error => ['PGRST202', '42P01', '42883'].includes(error?.code || error?.cause?.code);
 const connectionMessage = error => unavailable(error) ? 'Online pendiente de activar.' : error?.message || 'No llegó la confirmación del servidor. Vuelve a intentarlo.';
 const resultStorage = () => { try { return window.localStorage; } catch { return null; } };
+
+function OnlineArenaUT({ club, userId, grl, loading, searching, connecting, confirmed, connected, error, queueGrl }) {
+  const rating = queueGrl ?? grl;
+  return <div className={`ut-play__arena${searching ? ' is-searching' : ''}${error ? ' has-error' : ''}`}>
+    <div className="ut-play__arena-grid" aria-hidden="true"><i /><i /><i /></div>
+    <div className="ut-play__versus">
+      <div className="ut-play__contender ut-play__contender--own">
+        <div className="ut-play__crest-frame"><ClubIdentityLogoUT club={club} userId={userId} className="ut-play__arena-logo" /></div>
+        <span>TU CLUB</span><strong>{club.nombre}</strong><small>{loading ? 'Cargando once…' : `${grl} GRL`}</small>
+      </div>
+      <div className="ut-play__versus-mark" aria-hidden="true"><i /><b>VS</b><i /></div>
+      <div className="ut-play__contender ut-play__contender--rival">
+        <div className="ut-play__radar" aria-hidden="true"><i /><i /><span /><Shield size={39} strokeWidth={1.1} /><b>?</b></div>
+        <span>RIVAL REAL</span><strong>{searching ? 'Buscando club' : '¿Quién sigue?'}</strong><small>{searching ? 'Sin ampliar el rango' : 'Un nuevo desafío'}</small>
+      </div>
+    </div>
+    <div className="ut-play__search-state" role="status" aria-live="polite">
+      <span className={`ut-play__signal${searching ? ' is-active' : ''}`} aria-hidden="true"><i /><i /><i /></span>
+      <div><strong>{error ? 'Esperando reconexión' : connecting ? 'Conectando con la cancha…' : confirmed ? 'Tu próximo rival está por llegar' : searching ? 'Confirmando tu búsqueda…' : 'El siguiente partido empieza aquí'}</strong>
+        <span>{searching ? `Rivales de ${Math.max(0, rating - ONLINE_GRL_RANGE)} a ${Math.min(99, rating + ONLINE_GRL_RANGE)} GRL` : 'Mismo margen. La misma oportunidad.'}</span></div>
+      <span className="ut-play__range">±{ONLINE_GRL_RANGE}<small>GRL</small></span>
+    </div>
+    <ol className="ut-play__connection-steps" aria-label="Estado del emparejamiento">
+      <li className={connected && !error ? 'is-done' : connecting || error ? 'is-current' : ''}><span>{connected && !error ? <Check size={12} /> : '1'}</span>Conexión</li>
+      <li className={confirmed ? 'is-current' : searching && !connecting && !error ? 'is-current' : ''}><span>{confirmed ? <ScanLine size={12} /> : '2'}</span>Buscar rival</li>
+      <li><span>3</span>A la cancha</li>
+    </ol>
+  </div>;
+}
 
 export default function PlayUT({ onVolver, clubData, squadData, onOpenTeam }) {
   const reduced = useReducedMotion();
@@ -32,6 +62,8 @@ export default function PlayUT({ onVolver, clubData, squadData, onOpenTeam }) {
   const [serverTeam, setServerTeam] = useState(null);
   const [connecting, setConnecting] = useState(false);
   const [pendingSearch, setPendingSearch] = useState(false);
+  const onlinePane = useRef(null);
+  const practicePane = useRef(null);
   const queueId = useRef(null);
   const identityRef = useRef(clubData?.user_id || null);
   const operationLock = useRef(false);
@@ -83,8 +115,7 @@ export default function PlayUT({ onVolver, clubData, squadData, onOpenTeam }) {
 
   const acceptOnline = useCallback(payload => {
     if (!active.current) return;
-    const expectedWall = ((payload.match?.simulation_version >= 3 ? 120 : 180) + (payload.match?.simulation_version >= 2 ? payload.match.halftime_seconds ?? 12 : 0)) * 1000;
-    if (['playing', 'finished'].includes(payload.status) && (!payload.match?.home || !payload.match?.away || !Array.isArray(payload.match.events) || Date.parse(payload.match.ends_at) - Date.parse(payload.match.started_at) !== expectedWall || !Number.isInteger(payload.match.home_goals) || !Number.isInteger(payload.match.away_goals) || payload.match.home_goals < 0 || payload.match.home_goals > 6 || payload.match.away_goals < 0 || payload.match.away_goals > 6)) {
+    if (['playing', 'finished'].includes(payload.status) && !validOnlineMatchUT(payload.match)) {
       throw new Error('El servidor no pudo confirmar los datos del encuentro.');
     }
     const serverTime = Date.parse(payload.server_now);
@@ -183,30 +214,46 @@ export default function PlayUT({ onVolver, clubData, squadData, onOpenTeam }) {
   if (practice) return <MatchSimulationUT key={practice.id} match={practice} onVolver={() => setPractice(null)} onReplay={beginPractice} />;
   if (online.match && ['playing', 'finished'].includes(online.status)) return <MatchSimulationUT key={online.match.id} match={online.match} online serverOffset={online.serverOffset} serverStatus={online.status} viewerId={userId} connectionError={onlineError} onCoachOnline={coachOnline} onVolver={() => void leave()} />;
 
-  return <section className="ut-play" role="dialog" aria-modal="true" aria-label="Jugar Ultimate Team" onKeyDown={event => { if (event.key === 'Escape') void leave(); }}>
-    <header className="ut-play__header"><button autoFocus type="button" onClick={() => void leave()} disabled={connecting}><ArrowLeft size={18} /> Regresar</button><span>THC ULTIMATE TEAM</span><div><i className={online.online_count === null ? 'is-unknown' : ''} /><strong>{online.online_count === null ? '—' : online.online_count}</strong> Jugadores activos</div></header>
-    <div className="ut-play__wrap"><motion.div className="ut-play__title" initial={{ opacity: 0, y: reduced ? 0 : 10 }} animate={{ opacity: 1, y: 0 }}><div><p>Tu club. Tu partido.</p><h1>A LA <span>CANCHA.</span></h1></div><div className="ut-play__club"><ClubIdentityLogoUT club={club} userId={userId} className="ut-play__club-logo" /><div><strong>{club.nombre}</strong><span>{loading ? 'Cargando plantilla…' : `GRL ${ownMetrics.grl} · Energía ${ownMetrics.stamina}%`}</span></div></div></motion.div>
-      {(loadError || (!loading && (!validation.valid || legacyLineup))) && <div className="ut-play__lineup-warning" role="alert"><p>{loadError || (legacyLineup ? 'Actualiza y guarda tu alineación en My Team.' : 'Completa tu once y guarda la plantilla en My Team.')}</p>{loadError ? <button type="button" onClick={() => setLoadAttempt(attempt => attempt + 1)}>Reintentar</button> : <button type="button" onClick={onOpenTeam}>My Team <ArrowRight size={15} /></button>}</div>}
+  return <section className="ut-play" data-motion="on" role="dialog" aria-modal="true" aria-label="Jugar Ultimate Team" onKeyDown={event => { if (event.key === 'Escape') void leave(); }}>
+    <header className="ut-play__header">
+      <button autoFocus type="button" onClick={() => void leave()} disabled={connecting} aria-label="Regresar al menú de Ultimate Team"><ArrowLeft size={17} /><span>Regresar</span></button>
+      <div className="ut-play__brand"><b>UT</b><span>ULTIMATE TEAM<small>JUGAR</small></span></div>
+      <div className="ut-play__population" title="Jugadores en búsqueda o en partido, confirmados por el servidor"><i className={online.online_count === null ? 'is-unknown' : ''} /><strong>{online.online_count === null ? '—' : online.online_count}</strong><span>jugadores<br />en línea</span></div>
+    </header>
+    <div className="ut-play__wrap">
+      <motion.div className="ut-play__title" initial={{ opacity: 0, y: reduced ? 0 : 10 }} animate={{ opacity: 1, y: 0 }}>
+        <div><p>ELIGE TU PRÓXIMO DESAFÍO</p><h1>ESTO ES <span>FÚTBOL.</span></h1></div>
+        <div className="ut-play__club"><ClubIdentityLogoUT club={club} userId={userId} className="ut-play__club-logo" /><div><strong>{club.nombre}</strong><span>{loading ? 'Cargando plantilla…' : `${ownMetrics.grl} GRL`}<i />{loading ? 'Un momento' : `${ownMetrics.stamina}% de energía`}</span></div><button type="button" onClick={onOpenTeam} aria-label="Abrir My Team" disabled={searching || connecting}><ArrowUpRight size={18} /></button></div>
+      </motion.div>
+      <nav className="ut-play__mode-nav" aria-label="Modos de juego"><button type="button" onClick={() => onlinePane.current?.scrollIntoView({ behavior: reduced ? 'instant' : 'smooth', block: 'start' })}><Radio size={14} />Online<ArrowRight size={14} /></button><button type="button" onClick={() => practicePane.current?.scrollIntoView({ behavior: reduced ? 'instant' : 'smooth', block: 'start' })}><Gamepad2 size={15} />Offline<ArrowRight size={14} /></button></nav>
+      {(loadError || (!loading && (!validation.valid || legacyLineup))) && <div className="ut-play__lineup-warning" role="alert"><Shield size={18} /><p>{loadError || (legacyLineup ? 'Actualiza y guarda tu alineación en My Team.' : 'Completa tu once y guarda la plantilla en My Team.')}</p>{loadError ? <button type="button" onClick={() => setLoadAttempt(attempt => attempt + 1)}>Reintentar</button> : <button type="button" onClick={onOpenTeam} disabled={searching || connecting}>My Team <ArrowRight size={15} /></button>}</div>}
       <div className="ut-play__modes">
-        <motion.section className="ut-play__mode ut-play__mode--offline" initial={{ opacity: 0, y: reduced ? 0 : 15 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: .06 }}>
-          <div className="ut-play__mode-title"><span>01 / PRÁCTICA</span><h2>OFFLINE.</h2><p>Elige tu rival y prueba tu once.</p></div>
-          <div className="ut-play__rival">
-            <button type="button" onClick={() => setOpponentIndex(index => (index - 1 + EQUIPOS_DATA.length) % EQUIPOS_DATA.length)} aria-label="Rival anterior" disabled={searching}><ChevronLeft size={24} /></button>
-            <motion.div key={opponent.id} initial={{ opacity: 0, x: reduced ? 0 : 12 }} animate={{ opacity: 1, x: 0 }}><img src={opponent.img} alt={`Escudo de ${opponent.name}`} /><strong>{opponent.name}</strong><span>GRL {teamSimulationMetrics(opponent).grl}</span></motion.div>
-            <button type="button" onClick={() => setOpponentIndex(index => (index + 1) % EQUIPOS_DATA.length)} aria-label="Siguiente rival" disabled={searching}><ChevronRight size={24} /></button>
-          </div>
-          <div className="ut-play__rival-dots" aria-label="Equipos disponibles">{EQUIPOS_DATA.map((team, index) => <button type="button" key={team.id} aria-label={`Elegir ${team.name}`} aria-pressed={index === opponentIndex} disabled={searching} onClick={() => setOpponentIndex(index)} />)}</div>
-          <footer><span>Dos tiempos de 60 s · Práctica</span><button type="button" onClick={beginPractice} disabled={!canPlay || searching || connecting}>Jugar <ArrowRight size={18} /></button></footer>
-        </motion.section>
-        <motion.section className="ut-play__mode ut-play__mode--online" initial={{ opacity: 0, y: reduced ? 0 : 15 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: .12 }}>
-          <div className="ut-play__mode-title"><span>02 / FRENTE A FRENTE</span><h2>ONLINE.</h2><p>Un rival real. Un partido simulado.</p></div>
-          {searching ? <div className="ut-play__search" role="status"><div className="ut-play__search-rings" aria-hidden="true"><i /><i /><Users size={36} /></div><h3>{online.status === 'waiting' ? 'Buscando rival…' : 'Confirmando búsqueda…'}</h3><p>GRL {Math.max(0, (online.queue_grl ?? ownMetrics.grl) - 3)} — {Math.min(99, (online.queue_grl ?? ownMetrics.grl) + 3)}</p>{online.status === 'waiting' && <span>La búsqueda sigue mientras estás aquí.</span>}</div> : <div className="ut-play__online-art" aria-hidden="true"><span>VS</span><div><b>{ownMetrics.grl}</b><i /><b>?</b></div><span>GRL ±3</span></div>}
-          {onlineError && <p className="ut-play__online-error" role="status">{onlineError}</p>}
-          <footer><span>{searching ? online.status === 'waiting' ? 'Esperando otro jugador' : 'Esperando confirmación' : '2 minutos · Diferencia máxima de 3 GRL'}</span>
-            {searching ? <div className="ut-play__queue-actions">{online.status !== 'waiting' && <button type="button" disabled={connecting} onClick={() => void searchOnline()}>Reintentar</button>}<button type="button" disabled={connecting} className="ut-play__cancel" onClick={() => void cancelSearch()}><X size={16} />Cancelar</button></div> : <button type="button" onClick={() => void searchOnline()} disabled={!canPlay || connecting || onlineError === 'Online pendiente de activar.'}>{connecting ? 'Conectando…' : 'Buscar rival'}<ArrowRight size={18} /></button>}
+        <motion.section ref={onlinePane} className="ut-play__mode ut-play__mode--online" aria-labelledby="ut-online-title" initial={{ opacity: 0, y: reduced ? 0 : 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .45, delay: .05 }}>
+          <div className="ut-play__online-beam" aria-hidden="true" />
+          <div className="ut-play__mode-heading"><span><Radio size={13} /> FRENTE A FRENTE</span><span className="ut-play__tag">GRL ±{ONLINE_GRL_RANGE}</span></div>
+          <div className="ut-play__mode-title"><h2 id="ut-online-title">ONLINE<span>.</span></h2><p>Tu once contra otro jugador.</p></div>
+          <OnlineArenaUT club={club} userId={userId} grl={ownMetrics.grl} loading={loading} searching={searching} connecting={connecting} confirmed={online.status === 'waiting'} connected={online.online_count !== null} error={onlineError} queueGrl={online.queue_grl} />
+          {onlineError && <div className="ut-play__online-error" role="alert"><Wifi size={17} /><p>{onlineError}</p>{online.status === 'waiting' && <button type="button" onClick={() => void poll()} disabled={connecting}>Reconectar</button>}</div>}
+          <footer className="ut-play__online-footer">
+            <div><Shield size={18} /><p><strong>{searching ? 'No hay rivales forzados' : 'Un emparejamiento justo'}<span>{searching ? 'El rival y el partido los confirma el servidor.' : 'Máximo 3 GRL de diferencia. Siempre.'}</span></strong></p></div>
+            {searching ? <div className="ut-play__queue-actions">{online.status !== 'waiting' && <button type="button" disabled={connecting} onClick={() => void searchOnline()}>Reintentar búsqueda <ArrowRight size={16} /></button>}<button type="button" disabled={connecting} className="ut-play__cancel" onClick={() => void cancelSearch()}><X size={15} />{connecting ? 'Confirmando…' : 'Cancelar'}</button></div> : <button type="button" className="ut-play__primary" onClick={() => void searchOnline()} disabled={!canPlay || connecting || onlineError === 'Online pendiente de activar.'}><span>{loading ? 'Cargando once…' : 'Buscar rival'}</span><ArrowRight size={20} /></button>}
           </footer>
         </motion.section>
+        <motion.section ref={practicePane} className="ut-play__mode ut-play__mode--offline" aria-labelledby="ut-offline-title" initial={{ opacity: 0, y: reduced ? 0 : 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .45, delay: .13 }}>
+          <div className="ut-play__mode-heading"><span><Gamepad2 size={15} /> CAMPO DE PRUEBAS</span><span className="ut-play__tag">IA</span></div>
+          <div className="ut-play__mode-title"><h2 id="ut-offline-title">OFFLINE<span>.</span></h2><p>Prepara al equipo. El rival lo eliges tú.</p></div>
+          <div className="ut-play__practice-field" aria-hidden="true"><div /><i /><span /><b /></div>
+          <div className="ut-play__rival">
+            <button type="button" onClick={() => setOpponentIndex(index => (index - 1 + EQUIPOS_DATA.length) % EQUIPOS_DATA.length)} aria-label="Rival anterior" disabled={searching || connecting}><ChevronLeft size={21} /></button>
+            <motion.div key={opponent.id} initial={{ opacity: 0, x: reduced ? 0 : 12 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: .23 }}><img src={opponent.img} alt={`Escudo de ${opponent.name}`} /><span className="ut-play__rival-rating"><b>{teamSimulationMetrics(opponent).grl}</b> GRL</span></motion.div>
+            <button type="button" onClick={() => setOpponentIndex(index => (index + 1) % EQUIPOS_DATA.length)} aria-label="Siguiente rival" disabled={searching || connecting}><ChevronRight size={21} /></button>
+          </div>
+          <div className="ut-play__rival-select"><label htmlFor="ut-practice-rival">TU RIVAL</label><select id="ut-practice-rival" value={opponentIndex} onChange={event => setOpponentIndex(Number(event.target.value))} disabled={searching || connecting}>{EQUIPOS_DATA.map((team, index) => <option key={team.id} value={index}>{team.name}</option>)}</select></div>
+          <div className="ut-play__practice-details"><span><Timer size={14} />60 s por mitad + añadido</span><span>Sin afectar estadísticas</span></div>
+          <footer><button type="button" className="ut-play__practice-button" onClick={beginPractice} disabled={!canPlay || searching || connecting}><span>Jugar práctica</span><ArrowUpRight size={19} /></button></footer>
+        </motion.section>
       </div>
+      <p className="ut-play__bottom-note"><span>THC / MATCHDAY</span>Tu formación, tus cambios, tu partido.</p>
     </div>
   </section>;
 }

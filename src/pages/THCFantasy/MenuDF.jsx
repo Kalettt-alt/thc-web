@@ -1,7 +1,7 @@
 import { useState, useRef, useMemo } from 'react';
 import useCareerPersistence from './useCareerPersistence';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, CloudLightning, FlaskConical, Settings2, Trash2 } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, CalendarDays, CloudLightning, FlaskConical, Settings2, Shirt, Trash2, Trophy, Zap } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import confetti from 'canvas-confetti';
@@ -16,6 +16,7 @@ import './CareerRecovery.css';
 import { selectCareerLineup } from './squadSelection';
 import { completeSavedRoster } from './rosterCoverage';
 import './CareerLayout.css';
+import TopsDF from './TopsDF';
 
 import PlantelDF from './PlantelDF';
 import { FORMACIONES, calcGrlEfectivo } from './formacionesFantasy';
@@ -85,6 +86,7 @@ export default function MenuDF({ club, apodo, partidaCargada, userId }) {
   const [titularesMap, setTitularesMap] = useState(initial.titulares);
   const [reservas, setReservas] = useState(initial.reservas);
   const [energiaRevision, setEnergiaRevision] = useState(initial.energiaRevision);
+  const [partidaId] = useState(() => partidaCargada?.id || crypto.randomUUID());
   const [partidoEstado, setPartidoEstado] = useState(() => initial.fixture[initial.jornada]?.some(match => match.jugado && (match.local === clubFull.id || match.visitante === clubFull.id)) ? 'post' : 'idle');
   const [estadisticasPartido, setEstadisticasPartido] = useState(null);
   const [noticiasActuales, setNoticiasActuales] = useState(() => generateCareerNews({ club: clubFull, apodo, round: initial.jornada, standings: initial.standings, fixture: initial.fixture, lineup: initial.titulares, reserves: initial.reservas, teams: initial.ligaEquipos }));
@@ -93,9 +95,9 @@ export default function MenuDF({ club, apodo, partidaCargada, userId }) {
   const [isDeleting, setIsDeleting] = useState(false);
   const deleting = useRef(false);
   const snapshot = useMemo(() => clubFull && ligaEquipos.length ? {
-    club_id: clubFull.id, club_nombre: clubFull.name, liga: clubFull.liga,
+    partida_id: partidaId, club_id: clubFull.id, club_nombre: clubFull.name, liga: clubFull.liga,
     jornada_actual: jornada, tactica, titulares: titularesMap, reservas, fixture, standings, energia_revision: energiaRevision
-  } : null, [clubFull, ligaEquipos.length, jornada, tactica, titularesMap, reservas, fixture, standings, energiaRevision]);
+  } : null, [partidaId, clubFull, ligaEquipos.length, jornada, tactica, titularesMap, reservas, fixture, standings, energiaRevision]);
   const persistence = useCareerPersistence(snapshot, userId);
   const { isSaving, saveError, retry, pauseForDelete, resume } = persistence;
   const bebidas = useFantasyDrinks({ userId, snapshot, persistence, onRecovered: result => {
@@ -216,8 +218,14 @@ export default function MenuDF({ club, apodo, partidaCargada, userId }) {
     { id: 'plantel', label: 'PLANTILLA' },
     { id: 'calendario', label: 'CALENDARIO' },
     { id: 'liga', label: 'COMPETICIÓN' },
+    { id: 'tops', label: 'TOPS' },
     { id: 'configuracion', label: 'CONFIGURACIÓN' }
   ];
+
+  const recoveryPanel = partidoEstado !== 'jugando' && <section className="df-career-recovery" aria-label="Recuperación de la plantilla">
+    <div className="df-career-recovery__identity"><span className="df-career-recovery__icon"><FlaskConical size={20} /></span><div><strong>Bebida THC</strong><p>Recuperación del plantel al 100%.</p>{bebidas.error && <p className="df-career-recovery__error" role="status">{bebidas.error}</p>}</div></div>
+    <div className="df-career-recovery__action"><span className="df-career-recovery__count" aria-label={`${bebidas.count ?? 'Consultando'} bebidas disponibles`}>{bebidas.count ?? '—'}</span><button type="button" disabled={bebidas.busy || (!bebidas.pending && bebidas.count !== null && (bebidas.count === 0 || !hasTiredCareerPlayers(titularesMap, reservas)))} onClick={() => { if (bebidas.count === null && !bebidas.pending) void bebidas.refresh(); else void bebidas.consume(); }}>{bebidas.busy ? 'Recuperando…' : bebidas.pending ? 'Confirmar uso' : bebidas.count === null ? 'Consultar' : !hasTiredCareerPlayers(titularesMap, reservas) ? 'Plantel al 100%' : 'Usar bebida'}</button></div>
+  </section>;
 
   return (
     <div className="df-career flex flex-col h-screen bg-[#020202] text-white font-sans overflow-hidden relative selection:bg-[#F47A20] selection:text-black">
@@ -247,7 +255,8 @@ export default function MenuDF({ club, apodo, partidaCargada, userId }) {
               return (
                 <button
                   key={tab.id}
-                  onClick={() => { if(partidoEstado !== 'simulando') setSubTab(tab.id); }}
+                  onClick={() => { if(partidoEstado !== 'jugando') setSubTab(tab.id); }}
+                  aria-current={activo ? 'page' : undefined}
                   className={`relative pb-4 font-black uppercase tracking-[0.2em] text-sm md:text-base whitespace-nowrap transition-colors ${activo ? 'text-white' : 'text-[#555] hover:text-white'}`}
                 >
                   {tab.label}
@@ -269,9 +278,7 @@ export default function MenuDF({ club, apodo, partidaCargada, userId }) {
               <span>{isSaving ? 'GUARDANDO' : saveError ? 'REINTENTAR GUARDADO' : 'GUARDADO'}</span>
             </button>
                                                                     
-            <button disabled={recoveryBlocked} onClick={() => setShowConfirmDimitir(true)} aria-label="Rescindir contrato" title="Rescindir contrato" className="df-career-reset border border-red-900/50 text-red-500 hover:bg-red-600 hover:text-white px-5 py-2 font-black text-[10px] uppercase tracking-widest transition-colors">
-              <Trash2 size={15} /><span>RESCINDIR CONTRATO</span>
-            </button>
+            <button type="button" className="df-career-rayos" onClick={() => setSubTab('tops')} aria-label={`${persistence.rayos ?? 'Consultar'} rayos, abrir TOPS`}><Zap size={15} /><strong>{persistence.rayos ?? '—'}</strong><span>Rayos</span></button>
           </div>
         </div>
       </header>
@@ -279,12 +286,7 @@ export default function MenuDF({ club, apodo, partidaCargada, userId }) {
                                
       <main className="df-career-main flex-1 w-full overflow-y-auto custom-scrollbar relative z-10">
         <div className="df-career-content max-w-[1600px] mx-auto w-full p-4 md:p-8 lg:p-12 relative z-20">
-          {partidoEstado !== 'jugando' && (subTab === 'central' || subTab === 'plantel' || bebidas.pending) && (
-            <section className="df-career-recovery" aria-label="Recuperación de la plantilla">
-              <div className="df-career-recovery__identity"><span className="df-career-recovery__icon"><FlaskConical size={24} /></span><div><strong>Bebida THC</strong><p>Recupera al 100% a todo tu plantel.</p>{bebidas.error && <p className="df-career-recovery__error" role="status">{bebidas.error}</p>}</div></div>
-              <div className="df-career-recovery__action"><span className="df-career-recovery__count" aria-label={`${bebidas.count ?? 'Consultando'} bebidas disponibles`}>{bebidas.count ?? '—'}</span><button type="button" disabled={bebidas.busy || (!bebidas.pending && bebidas.count !== null && (bebidas.count === 0 || !hasTiredCareerPlayers(titularesMap, reservas)))} onClick={() => { if (bebidas.count === null && !bebidas.pending) void bebidas.refresh(); else void bebidas.consume(); }}>{bebidas.busy ? 'Recuperando…' : bebidas.pending ? 'Confirmar uso' : bebidas.count === null ? 'Consultar' : !hasTiredCareerPlayers(titularesMap, reservas) ? 'Plantel al 100%' : 'Usar bebida'}</button></div>
-            </section>
-          )}
+          {(subTab === 'plantel' || bebidas.pending && subTab !== 'central') && recoveryPanel}
           <AnimatePresence mode="wait">
 
             {subTab === 'configuracion' && partidoEstado !== 'jugando' && (
@@ -293,6 +295,7 @@ export default function MenuDF({ club, apodo, partidaCargada, userId }) {
                 <h2>TU CANCHA<span>.</span></h2>
                 <p className="df-menu-settings__intro">Conserva el estadio THC o juega con una vista básica para equipos con menos recursos. La simulación y tus decisiones funcionan igual.</p>
                 <MatchDisplayOptions display={displayPreferences} onChange={changeDisplayPreferences} />
+                <div className="df-career-contract"><div><strong>Tu contrato</strong><p>Rescindir finaliza esta temporada. Los rayos de TOPS se conservan.</p></div><button type="button" disabled={recoveryBlocked} onClick={() => setShowConfirmDimitir(true)}><Trash2 size={15} />Rescindir contrato</button></div>
               </motion.section>
             )}
 
@@ -300,18 +303,20 @@ export default function MenuDF({ club, apodo, partidaCargada, userId }) {
             {subTab === 'central' && partidoEstado === 'idle' && (
               <motion.div key="central" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="df-career-central">
                 <section className="df-fixture-card">
-                  <header><span>{getNombresLigas(clubFull.liga)}</span><h2>Jornada {jornada + 1}<i>.</i></h2></header>
+                  <header><div><span>Próximo encuentro</span><h2>Jornada {jornada + 1}<i>.</i></h2></div><span className="df-fixture-league">{getNombresLigas(clubFull.liga)}</span></header>
                   {isMatchEnded ? <p className="df-fixture-finished">Temporada finalizada</p> : <div className="df-fixture-teams">
                     <div>{clubFull.img && <img src={getImg(clubFull.img)} alt="" />}<h3>{clubFull.name}</h3><span>GRL {miGrl}</span></div>
                     <span className="df-fixture-versus">VS</span>
                     <div>{rivObj?.img && <img src={getImg(rivObj.img)} alt="" />}<h3>{rivObj?.name}</h3><span>GRL {rivObj?.grl || '—'}</span></div>
                   </div>}
-                  {!isMatchEnded && <button type="button" onClick={() => setSubTab('partido')}>Iniciar encuentro <span aria-hidden="true">-</span></button>}
+                  {!isMatchEnded && <button type="button" onClick={() => setSubTab('partido')}>Jugar partido <ArrowUpRight size={21} /></button>}
                 </section>
                 <div className="df-career-aside">
-                  <button type="button" className="df-standing-card" onClick={() => setSubTab('liga')}><span>Tu liga</span><b>#{miPosicion}</b><strong>{standings[clubFull.id]?.pts || 0} puntos</strong><small>Ver clasificación ↗</small></button>
+                  <button type="button" className="df-standing-card" onClick={() => setSubTab('liga')}><div><span>Tu liga</span><b>#{miPosicion}</b></div><div><strong>{standings[clubFull.id]?.pts || 0}<small>puntos</small></strong><span>Ver clasificación ↗</span></div></button>
                   <button type="button" className="df-news-card" onClick={() => setSubTab('noticias')}><span>Diario T.H.C.</span><h3>{noticiasActuales[0]?.titular || 'Una nueva jornada por delante'}</h3><small>Leer noticias ↗</small></button>
+                  {recoveryPanel}
                 </div>
+                <div className="df-career-shortcuts"><button type="button" onClick={() => setSubTab('plantel')}><Shirt size={24} /><div><small>{tactica.split(' ')[0]} · GRL {miGrl}</small><strong>Mi plantilla</strong></div><ArrowUpRight size={19} /></button><button type="button" onClick={() => setSubTab('calendario')}><CalendarDays size={24} /><div><small>Jornada {jornada + 1} de {fixture.length}</small><strong>Calendario</strong></div><ArrowUpRight size={19} /></button><button type="button" onClick={() => setSubTab('tops')}><Trophy size={25} /><div><small>Clasificación global</small><strong>TOPS <span><Zap size={13} />{persistence.rayos ?? '—'}</span></strong></div><ArrowUpRight size={19} /></button></div>
               </motion.div>
             )}
 
@@ -326,7 +331,7 @@ export default function MenuDF({ club, apodo, partidaCargada, userId }) {
                     <div>{rivObj?.img && <img src={getImg(rivObj.img)} alt="" />}<h3>{rivObj?.name}</h3><span>{esLocal ? 'Visitante' : 'Local'} · GRL {rivObj?.grl || '—'}</span></div>
                   </div>
                   <div className="df-match-ticket__details"><span>{tactica.split(' ')[0]}<small>Tu formación</small></span><span>{Math.round(Object.values(titularesMap).filter(Boolean).reduce((sum, player) => sum + careerEnergy(player.energia), 0) / 11)}%<small>Energía del once</small></span><span>2 × 90 s<small>Juego activo</small></span></div>
-                  <footer><button type="button" className="df-ticket-adjust" onClick={() => setSubTab('plantel')}>Ajustar alineación</button><button type="button" disabled={recoveryBlocked || Object.values(titularesMap).filter(Boolean).length !== 11} onClick={() => setPartidoEstado('jugando')}>Confirmar encuentro <span aria-hidden="true">→</span></button></footer>
+                  <footer><button type="button" className="df-ticket-adjust" onClick={() => setSubTab('plantel')}>Ajustar alineación</button><button type="button" disabled={recoveryBlocked || isSaving || saveError || Object.values(titularesMap).filter(Boolean).length !== 11} onClick={() => setPartidoEstado('jugando')}>{isSaving ? 'Guardando carrera…' : saveError ? 'Confirma el guardado' : 'Confirmar encuentro'} <span aria-hidden="true">→</span></button></footer>
                 </>}
               </motion.section>
             )}
@@ -355,6 +360,7 @@ export default function MenuDF({ club, apodo, partidaCargada, userId }) {
                 <TablaDF standings={standings} club={clubFull} jornada={jornada} totalJornadas={fixture.length} nombreLiga={getNombresLigas(clubFull.liga)} getImg={getImg} />
               </motion.div>
             )}
+            {subTab === 'tops' && partidoEstado !== 'jugando' && <motion.div key="tops" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}><TopsDF userId={userId} rayos={persistence.rayos} isSaving={isSaving} /></motion.div>}
             
             {subTab === 'noticias' && partidoEstado !== 'jugando' && (
               <motion.div key="noticias" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>

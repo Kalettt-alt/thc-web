@@ -9,8 +9,6 @@ import './FantasyEntry.css';
 
 const NODES = [[12, 50], [31, 18], [29, 39], [29, 61], [31, 82], [49, 29], [47, 50], [49, 71], [70, 23], [78, 50], [70, 77]];
 const INTRO_CLUBS = ['river', 'boca', 'barcelona', 'realmadrid', 'alianza', 'flamengo'].map(id => TODOS_LOS_EQUIPOS.find(club => club.id === id)).filter(Boolean);
-const FEATURED_CLUB = TODOS_LOS_EQUIPOS.find(club => club.id === 'river') || TODOS_LOS_EQUIPOS[0];
-const RIVAL = TODOS_LOS_EQUIPOS.find(club => club.id === 'boca') || TODOS_LOS_EQUIPOS[1];
 
 function CinematicPitch() {
   return <div className="df-cinema-pitch" aria-hidden="true">
@@ -44,7 +42,7 @@ export default function IntroDF({ onFinalizar }) {
       {phase === 1 && <section className="df-cinema-colours-scene" aria-label="Los colores y escudos de los clubes en el estadio">
         <FantasyStadium id="df-intro-colours" />
         <div className="df-cinema-flags" aria-hidden="true">{INTRO_CLUBS.map((club, i) => <div key={club.id} style={{ '--i': i }}><img src={clubCrestDF(club)} alt="" /></div>)}</div>
-        <div className="df-cinema-crest-close" aria-hidden="true"><img src={clubCrestDF(FEATURED_CLUB)} alt="" /></div>
+        <div className="df-cinema-crest-close" aria-hidden="true"><img src={logoTHC} alt="" /></div>
         <div className="df-cinema-caption"><strong>UN ESCUDO.</strong></div>
       </section>}
       {phase === 2 && <section className="df-cinema-plan-scene" aria-label="El director técnico dibuja una jugada en su pizarra">
@@ -55,7 +53,7 @@ export default function IntroDF({ onFinalizar }) {
         <div className="df-cinema-caption"><strong>UNA IDEA.</strong></div>
       </section>}
       {phase === 3 && <section className="df-cinema-action-scene" aria-label="Una jugada a cámara rápida termina en un disparo a portería">
-        <div className="df-cinema-broadcast"><img src={clubCrestDF(FEATURED_CLUB)} alt="" /><span>0 — 0</span><img src={clubCrestDF(RIVAL)} alt="" /><i>78:42</i></div>
+        <div className="df-cinema-broadcast" aria-label="Partido de demostración THC"><img src={logoTHC} alt="THC" /><span>0 — 0</span><img src={logoTHC} alt="THC" /><i>78:42</i></div>
         <CinematicPitch />
         <div className="df-cinema-touchline" aria-hidden="true"><FantasyCoach className="df-cinema-coach-directing" /><i /><i /><i /></div>
         <div className="df-cinema-caption"><strong>EL MOMENTO.</strong></div>
@@ -63,7 +61,7 @@ export default function IntroDF({ onFinalizar }) {
       {phase === 4 && <section className="df-cinema-celebration-scene" aria-label="El director técnico celebra el gol con su equipo">
         <FantasyStadium id="df-intro-celebration" />
         <FantasyCoach className="df-cinema-coach-celebrating" />
-        <div className="df-cinema-celebration-score" aria-hidden="true"><img src={clubCrestDF(FEATURED_CLUB)} alt="" /><strong>2 — 1</strong><img src={clubCrestDF(RIVAL)} alt="" /></div>
+        <div className="df-cinema-celebration-score" aria-hidden="true"><img src={logoTHC} alt="" /><strong>2 — 1</strong><img src={logoTHC} alt="" /></div>
         <div className="df-cinema-confetti" aria-hidden="true">{Array.from({ length: 24 }, (_, i) => <i key={i} style={{ '--i': i }} />)}</div>
         <div className="df-cinema-caption"><strong>ES TU HISTORIA.</strong></div>
       </section>}

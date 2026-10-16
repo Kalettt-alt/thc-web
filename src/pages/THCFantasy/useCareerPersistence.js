@@ -8,6 +8,7 @@ export default function useCareerPersistence(snapshot, userId) {
   const [failedKey, setFailedKey] = useState(null);
   const [paused, setPaused] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const [rayos, setRayos] = useState(null);
   const chain = useRef(Promise.resolve());
   const version = useRef(0);
   const pending = useRef(null);
@@ -19,7 +20,10 @@ export default function useCareerPersistence(snapshot, userId) {
     chain.current = chain.current.catch(() => {}).then(async () => {
       if (currentVersion !== version.current || deleting.current) return;
       try {
-        const saved = await saveFantasySnapshot(supabase, entry.snapshot, userId, () => currentVersion === version.current && !deleting.current);
+        const saved = await saveFantasySnapshot(supabase, entry.snapshot, userId, () => currentVersion === version.current && !deleting.current, 15000, result => {
+          if (mounted.current && Number.isSafeInteger(result.rayos)) setRayos(result.rayos);
+          if (mounted.current && [2, 1, -1].includes(result.rayos_delta)) toast(`${result.rayos_delta > 0 ? '+' : '−'}${Math.abs(result.rayos_delta)} ${Math.abs(result.rayos_delta) === 1 ? 'rayo' : 'rayos'} · TOPS`, { icon: '⚡', id: `fantasy-rayos-${result.id}-${entry.snapshot.jornada_actual}` });
+        });
         if (!saved) return;
         if (currentVersion === version.current) {
           pending.current = null;
@@ -80,5 +84,5 @@ export default function useCareerPersistence(snapshot, userId) {
     return () => window.removeEventListener('beforeunload', warnUnsaved);
   }, [isSaving, saveError, paused]);
 
-  return { isSaving, saveError, retry, pauseForDelete, resume };
+  return { isSaving, saveError, retry, pauseForDelete, resume, rayos };
 }

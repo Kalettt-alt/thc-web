@@ -1,5 +1,5 @@
 // Broadcast choreography only. Scores and match events always come from the simulation.
-import { matchDurationSeconds } from './simulationUT.js';
+import { matchHalfSeconds, UT_MATCH_PLAYS } from './matchPlaysUT.js';
 const clamp = (value, minimum, maximum) => Math.min(maximum, Math.max(minimum, value));
 const aliases = { POR: 'GK', DFC: 'CB', LI: 'LB', LD: 'RB', MC: 'CM', MDC: 'CDM', MCD: 'CDM', MCO: 'CAM', EI: 'LW', ED: 'RW', MI: 'LM', MD: 'RM', DC: 'ST', SP: 'CF', EXT: 'LW' };
 const lanes = { GK: [.065,.5], CB: [.24,.5], LB: [.28,.15], RB: [.28,.85], LWB: [.37,.12], RWB: [.37,.88], CDM: [.39,.5], CM: [.5,.5], CAM: [.63,.5], LM: [.54,.15], RM: [.54,.85], LW: [.72,.18], RW: [.72,.82], CF: [.72,.5], ST: [.8,.5] };
@@ -17,11 +17,12 @@ export function broadcastKitColors(team, away = false) {
 export function broadcastScene(match, elapsed, phase = 'first') {
   const visible = (match.events || []).filter(event => event.second <= elapsed);
   const latest = [...visible].reverse().find(event => ['goal','save','post','shot'].includes(event.type) && elapsed - event.second < 2.6) || visible.at(-1);
+  const play = UT_MATCH_PLAYS.find(item=>item.id===latest?.play_id);
   const segmentLength = match.simulation_version >= 3 ? 1.35 : 2.6;
   const segment = Math.floor(elapsed / segmentLength);
   const terminal = ['goal','shot','save','post'].includes(latest?.type);
   const possession = latest?.side ? terminal && elapsed - latest.second >= 2.6 ? latest.side === 'home' ? 'away' : 'home' : latest.side : hash(`${match.id}-${Math.floor(elapsed / 8)}`) % 2 ? 'home' : 'away';
-  const secondHalf = elapsed > matchDurationSeconds(match) / 2 || phase === 'second' || phase === 'finished';
+  const secondHalf = elapsed > matchHalfSeconds(match) || phase === 'second' || phase === 'finished';
   const players = ['home','away'].flatMap(side => {
     const roster = (match[side]?.titulares || []).filter(Boolean);
     const roles = roster.map(role);
@@ -68,11 +69,26 @@ export function broadcastScene(match, elapsed, phase = 'first') {
   const recent = latest && elapsed - latest.second;
   const finishing = latest && ['goal','shot','save','post'].includes(latest.type) && recent >= 0 && recent < 2.6;
   let highlight = carrier;
+  if (play && latest?.type==='pass') {
+    const routeProgress = clamp((elapsed-latest.second)/4,0,1)*(play.route.length-1);
+    const segmentIndex = Math.min(play.route.length-2,Math.floor(routeProgress));
+    const ratio = routeProgress-segmentIndex;
+    const from = play.route[segmentIndex], to = play.route[segmentIndex+1];
+    const right = (possession==='home') !== secondHalf;
+    const routeX = from[0]+(to[0]-from[0])*ratio, routeY = from[1]+(to[1]-from[1])*ratio;
+    ball = {x:right?routeX:1-routeX,y:right?routeY:1-routeY,height:play.id.includes('cross')||play.id.startsWith('corner_')?Math.sin(ratio*Math.PI)*12:Math.sin(ratio*Math.PI)*2};
+    highlight = attackers.find(player=>player.role===play.roles[Math.min(segmentIndex,play.roles.length-1)]) || carrier;
+    if (highlight) {highlight.x=ball.x+(right?-.012:.012);highlight.y=clamp(ball.y+.018,.08,.92);}
+    const defenders = players.filter(player=>player.side!==possession&&player.role!=='GK');
+    const pressure = [...defenders].sort((a,b)=>Math.hypot(a.x-ball.x,a.y-ball.y)-Math.hypot(b.x-ball.x,b.y-ball.y)).slice(0,2);
+    for (const defender of pressure) {defender.x=clamp(defender.x+(ball.x-defender.x)*.32,.035,.965);defender.y=clamp(defender.y+(ball.y-defender.y)*.5,.08,.92);}
+  }
   if (finishing) {
     const shooterName = latest.shooter || latest.attacker || (latest.type !== 'save' ? latest.player : null);
     highlight = attackers.find(player => player.name === shooterName) || attackers.find(player => ['ST','LW','RW','CF'].includes(player.role)) || carrier;
     if (highlight) {
       const right = highlight.facingRight;
+      if (play) {const point=play.route.at(-1);highlight.x=right?point[0]:1-point[0];highlight.y=right?point[1]:1-point[1];}
       const ratio = clamp(recent / .65, 0, 1);
       const endpoint = latest.type === 'goal' ? right ? 1.018 : -.018 : latest.type === 'shot' ? right ? .995 : .005 : right ? .94 : .06;
       const endY = latest.type === 'post' ? .407 : latest.type === 'shot' ? .34 : .49 + (hash(`${match.id}-${latest.second}`) % 5 - 2) * .025;
@@ -86,6 +102,11 @@ export function broadcastScene(match, elapsed, phase = 'first') {
       if (latest.type === 'post' && ratio === 1) { ball.x = endpoint + (right ? -.12 : .12) * clamp((recent - .65) / 1.2, 0, 1); ball.y += .15 * clamp((recent - .65) / 1.2, 0, 1); }
     }
   }
+  if (['settled','clearance'].includes(latest?.type)) {
+    const keeper=players.find(player=>player.side===possession&&player.role==='GK');
+    if (latest.resume==='middle') ball={x:.5,y:.5,height:0};
+    else if (keeper) {ball={x:keeper.x,y:keeper.y+.012,height:0};highlight=keeper;}
+  }
   if (phase === 'pre' || phase === 'halftime' || phase === 'finished' || latest?.type === 'kickoff' && recent < .7) ball = { x: .5, y: .5, height: 0 };
-  return { players, ball, highlight: highlight?.id, possession, latest, finishing, danger: finishing || carrier && towardGoal(carrier) > .76, passingForward: carrier && target ? towardGoal(target) >= towardGoal(carrier) : true };
+  return { players, ball, highlight: highlight?.id, possession, latest, finishing, playId:play?.id, danger: finishing || !latest?.safe_end && (play ? (possession==='home')!==secondHalf?ball.x>.76:ball.x<.24 : carrier && towardGoal(carrier) > .76), passingForward: carrier && target ? towardGoal(target) >= towardGoal(carrier) : true };
 }

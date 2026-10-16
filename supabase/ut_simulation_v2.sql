@@ -32,12 +32,12 @@ begin
 end $constraints$;
 alter table public.ut_online_partidas drop constraint if exists ut_online_v2_duration;
 alter table public.ut_online_partidas add constraint ut_online_v2_duration
-  check(ends_at=started_at+case when simulation_version=3 then interval '132 seconds' when simulation_version=2 then interval '192 seconds' else interval '180 seconds' end);
+  check(case when simulation_version=4 then extract(epoch from ends_at-started_at) in(140,142,144,146,148) else ends_at=started_at+case when simulation_version=3 then interval '132 seconds' when simulation_version=2 then interval '192 seconds' else interval '180 seconds' end end);
 alter table public.ut_online_partidas drop constraint if exists ut_online_v2_matching;
 alter table public.ut_online_partidas add constraint ut_online_v2_matching
   check(home_initial_grl between 0 and 99 and away_initial_grl between 0 and 99 and abs(home_initial_grl-away_initial_grl)<=3);
 alter table public.ut_online_partidas drop constraint if exists ut_online_v2_cursor;
-alter table public.ut_online_partidas add constraint ut_online_v2_cursor check(active_seconds between 0 and case when simulation_version=3 then 120 else 180 end and simulation_version in (1,2,3));
+alter table public.ut_online_partidas add constraint ut_online_v2_cursor check(active_seconds between 0 and case when simulation_version=4 then 136 when simulation_version=3 then 120 else 180 end and simulation_version in (1,2,3,4));
 
 create table if not exists thc_private.ut_online_tactical_requests (
   user_id uuid not null references auth.users(id) on delete cascade,

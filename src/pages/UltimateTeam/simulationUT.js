@@ -1,4 +1,6 @@
 import { effectivePlayerGrl, playerPositionPenalty, SQUAD_FORMATIONS } from './squadUT.js';
+import { matchActiveDurationSeconds, matchHalfSeconds, matchMinuteState, matchOpportunitySchedule, UT_MATCH_PLAYS } from './matchPlaysUT.js';
+export { matchActiveDurationSeconds, matchHalfSeconds, matchMinuteState } from './matchPlaysUT.js';
 
 export const UT_MATCH_DURATION = 120;
 export const UT_HALFTIME_DURATION = 12;
@@ -65,11 +67,13 @@ function pickPlayer(team, random, type) {
 }
 
 export function createOfflineMatch(home, away, { seed = 'practice', startedAt = Date.now() } = {}) {
+  const halfSeconds = 64 + Math.floor(seededMatchRandom(`${seed}:added-time`)() * 5);
   return {
-    id: `practice-${seed}`, seed: String(seed), simulation_version: 3,
+    id: `practice-${seed}`, seed: String(seed), simulation_version: 4,
     home: prepareSimulationTeam(home), away: prepareSimulationTeam(away),
     duration_seconds: UT_MATCH_DURATION, halftime_seconds: UT_HALFTIME_DURATION,
-    started_at: new Date(startedAt).toISOString(), ends_at: new Date(startedAt + UT_MATCH_WALL_DURATION * 1000).toISOString(),
+    active_duration_seconds: halfSeconds * 2, first_half_seconds: halfSeconds,
+    started_at: new Date(startedAt).toISOString(), ends_at: new Date(startedAt + (halfSeconds * 2 + UT_HALFTIME_DURATION) * 1000).toISOString(),
     events: [{ second: 0, minute: 0, side: 'home', type: 'kickoff', pattern: 'Saque inicial' }],
     home_goals: 0, away_goals: 0, active_seconds: 0, coaching_requests: [],
   };
@@ -109,43 +113,55 @@ function fatigueTeam(team, seconds, duration) {
 /** Generates only elapsed play. No result is decided at kickoff or rewritten after coaching. */
 export function advanceOfflineMatch(match, elapsed) {
   if (!match || !(match.simulation_version >= 2)) return match;
-  const duration = matchDurationSeconds(match), half = duration / 2, step = match.simulation_version >= 3 ? 16 : 23;
-  const target = Math.floor(clamp(value(elapsed, 0), match.active_seconds || 0, duration));
+  const duration = matchDurationSeconds(match), half = matchHalfSeconds(match), activeDuration = matchActiveDurationSeconds(match);
+  const live = match.simulation_version >= 4;
+  const schedule = matchOpportunitySchedule(match);
+  const deckOffset = Math.floor(seededMatchRandom(`${match.seed}:play-deck`)() * UT_MATCH_PLAYS.length);
+  const playFor = event => UT_MATCH_PLAYS[(deckOffset + (event.index * 2 + (event.side === 'away' ? 1 : 0)) * 7) % UT_MATCH_PLAYS.length];
+  const target = Math.floor(clamp(value(elapsed, 0), match.active_seconds || 0, activeDuration));
   if (target === match.active_seconds) return match;
   let next = { ...match, events: [...match.events] };
-  const eventTicks = new Set([half, half + 1, duration, target]);
-  for (let index = 0; index < 7; index++) for (const offset of [8, 14]) { eventTicks.add(offset + step * index); eventTicks.add(offset + step * index - 4); }
+  const eventTicks = new Set([half, half + 1, activeDuration, target]);
+  for (const event of schedule) { eventTicks.add(event.second); eventTicks.add(event.second - 4); if (live) eventTicks.add(event.second + 3); }
   let cursor = match.active_seconds;
   for (const second of [...eventTicks].filter(second => second > cursor && second <= target).sort((a, b) => a - b)) {
     next.home = fatigueTeam(next.home, second - cursor, duration); next.away = fatigueTeam(next.away, second - cursor, duration); cursor = second;
     if (second === half) next.events.push({ second, minute: 45, side: 'home', type: 'halftime', pattern: 'Entretiempo' });
     if (second === half + 1) next.events.push({ second, minute: 45, side: 'away', type: 'kickoff', pattern: 'Comienza el segundo tiempo' });
     for (const side of ['home', 'away']) {
-      const offset = side === 'home' ? 8 : 14;
-      const opportunity = (second - offset) / step;
-      const build = (second + 4 - offset) / step;
-      if (Number.isInteger(build) && build >= 0 && build < 7) {
+      const build = schedule.find(event => event.side === side && event.second - 4 === second);
+      if (build) {
         const random = seededMatchRandom(`${next.seed}:${second}:${side}:pass`);
-        next.events.push({ second, minute: Math.floor(second * 90 / duration), side, type: 'pass', player: pickPlayer(next[side], random, 'pass'), pattern: patterns[Math.floor(random() * patterns.length)] });
+        const play = playFor(build);
+        next.events.push({ second, ...matchMinuteState(match,second), side, type: 'pass', player: pickPlayer(next[side], random, 'pass'), pattern: live ? play.label : patterns[Math.floor(random() * patterns.length)], ...(live ? {play_id:play.id} : {}) });
       }
-      if (!Number.isInteger(opportunity) || opportunity < 0 || opportunity >= 7) continue;
+      const opportunity = schedule.find(event => event.side === side && event.second === second);
+      if (!opportunity) continue;
       const other = side === 'home' ? 'away' : 'home';
       const team = next[side], rival = next[other];
       const metrics = teamSimulationMetrics(team), rivalMetrics = teamSimulationMetrics(rival);
       const random = seededMatchRandom(`${next.seed}:${second}:${side}:chance`);
-      let chance = clamp(.19 + (metrics.strength - rivalMetrics.strength) * .009 + attackingBonus[team.mentalidad] + defensiveExposure[rival.mentalidad], .05, .43);
+      const play = playFor(opportunity);
+      const attribute = team.titulares.reduce((sum,player)=>sum+value(player[play.attribute],player.base_grl ?? player.grl),0)/Math.max(1,team.titulares.length);
+      const playBonus = live ? play.bonus + clamp((attribute-metrics.grl)*.001,-.025,.025) : 0;
+      let chance = clamp(.19 + (metrics.strength - rivalMetrics.strength) * .009 + attackingBonus[team.mentalidad] + defensiveExposure[rival.mentalidad] + playBonus, .05, .43);
       const goals = next[`${side}_goals`];
       if (goals >= 4) chance *= .2;
       const roll = random();
       const type = roll < chance && goals < 6 ? 'goal' : roll < chance + .34 ? 'save' : roll < chance + .43 ? 'post' : 'shot';
       const shooter = pickPlayer(team, random, 'shot');
-      next.events.push({ second, minute: Math.floor(second * 90 / duration), side, type, player: type === 'save' ? pickPlayer(rival, random, 'save') : shooter, shooter, pattern: patterns[Math.floor(random() * patterns.length)] });
+      next.events.push({ second, ...matchMinuteState(match,second), side, type, player: type === 'save' ? pickPlayer(rival, random, 'save') : shooter, shooter, pattern: live ? play.label : patterns[Math.floor(random() * patterns.length)], ...(live ? {play_id:play.id} : {}) });
       if (type === 'goal') {
         next[`${side}_goals`]++;
-        next.events.push({ second, minute: Math.floor(second * 90 / duration), side: other, type: 'kickoff', pattern: 'Saque desde el medio' });
+        next.events.push({ second, ...matchMinuteState(match,second), side: other, type: 'kickoff', pattern: 'Saque desde el medio' });
       }
     }
-    if (second === duration) next.events.push({ second, minute: 90, side: 'home', type: 'fulltime', pattern: 'Final del partido' });
+    if (live) for (const ended of schedule.filter(event => event.second + 3 === second && [half-4,activeDuration-4].includes(event.second))) {
+      const shot = next.events.find(event=>event.second===ended.second && event.side===ended.side && ['goal','shot','save','post'].includes(event.type));
+      const other = ended.side==='home'?'away':'home';
+      next.events.push({second,...matchMinuteState(match,second),side:other,type:shot?.type==='post'?'clearance':'settled',pattern:shot?.type==='post'?'Despeje fuera del área':shot?.type==='save'?'El arquero controla la pelota':shot?.type==='goal'?'Balón en el centro':'Balón fuera. Saque de meta',safe_end:true,resume:shot?.type==='goal'?'middle':'keeper'});
+    }
+    if (second === activeDuration) next.events.push({ second, minute: 90, minuteLabel:matchMinuteState(match,second).minuteLabel, side: 'home', type: 'fulltime', pattern: 'Final del partido' });
   }
   next.active_seconds = target;
   return next;
@@ -155,7 +171,7 @@ export function advanceOfflineMatch(match, elapsed) {
 export function applyOfflineCoaching(match, { titulares, formacion, mentalidad = 'neutral', requestId, side = 'home', revision } = {}, elapsed = match.active_seconds) {
   const next = advanceOfflineMatch(match, elapsed);
   if (requestId && next.coaching_requests.includes(requestId)) return next;
-  if (!['home', 'away'].includes(side) || next.active_seconds >= matchDurationSeconds(next)) throw new Error('El partido ya terminó.');
+  if (!['home', 'away'].includes(side) || next.active_seconds >= matchActiveDurationSeconds(next)) throw new Error('El partido ya terminó.');
   const team = next[side], positions = SQUAD_FORMATIONS[formacion];
   if (revision !== undefined && revision !== team.revision) throw new Error('La alineación cambió. Revisa el once y vuelve a aplicar.');
   if (!positions || !Object.hasOwn(attackingBonus, mentalidad) || !Array.isArray(titulares) || titulares.length !== 11 || new Set(titulares).size !== 11) throw new Error('La alineación no es válida.');
@@ -174,14 +190,14 @@ export function applyOfflineCoaching(match, { titulares, formacion, mentalidad =
     ...team, titulares: players, bench: team.roster.filter(player => !titulares.includes(player.id) && !subbedOff.includes(player.id)),
     formacion, mentalidad, revision: team.revision + 1, substitutions: team.substitutions + incoming.length, subbed_off: subbedOff,
     ...teamSimulationMetrics({ titulares: players }),
-  }, events: [...next.events, { second: next.active_seconds, minute: Math.floor(next.active_seconds * 90 / matchDurationSeconds(next)), side, type: 'tactics', pattern: incoming.length ? `${incoming.length} cambio${incoming.length === 1 ? '' : 's'}` : 'Ajuste táctico' }] };
+  }, events: [...next.events, { second: next.active_seconds, ...matchMinuteState(next,next.active_seconds), side, type: 'tactics', pattern: incoming.length ? `${incoming.length} cambio${incoming.length === 1 ? '' : 's'}` : 'Ajuste táctico' }] };
 }
 
 export function matchClockState(match, now = Date.now()) {
   const start = Date.parse(match?.started_at), end = Date.parse(match?.ends_at);
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return { elapsed: 0, wallElapsed: 0, phase: 'pre', halftimeRemaining: 0 };
   const halftime = match.simulation_version >= 2 ? value(match.halftime_seconds, UT_HALFTIME_DURATION) : 0;
-  const duration = matchDurationSeconds(match), half = duration / 2;
+  const duration = matchActiveDurationSeconds(match), half = duration / 2;
   const raw = (now - start) / 1000;
   const wallElapsed = clamp(raw, 0, duration + halftime);
   const elapsed = raw < half ? wallElapsed : raw < half + halftime ? half : clamp(raw - halftime, half, duration);
@@ -194,7 +210,7 @@ export function matchElapsedSeconds(match, now = Date.now()) {
 }
 
 export function matchVisibleState(match, elapsed) {
-  const duration = matchDurationSeconds(match);
+  const duration = matchActiveDurationSeconds(match);
   const seconds = clamp(value(elapsed, 0), 0, duration);
   const events = (match?.events || []).filter(event => value(event.second, duration + 1) <= seconds);
   const stats = { home: { goals: 0, shots: 0, saves: 0, posts: 0 }, away: { goals: 0, shots: 0, saves: 0, posts: 0 } };
@@ -205,7 +221,7 @@ export function matchVisibleState(match, elapsed) {
     if (event.type === 'post') stats[event.side].posts++;
     if (event.type === 'save') stats[event.side === 'home' ? 'away' : 'home'].saves++;
   }
-  return { seconds, minute: Math.min(90, Math.floor(seconds * 90 / duration)), events, latest: events.at(-1), stats };
+  return { seconds, ...matchMinuteState(match,seconds), events, latest: events.at(-1), stats };
 }
 
 export function simulationPlayerMarkers(team, side, event) {
@@ -237,7 +253,7 @@ export function observeMatchClock(match, onTick, { now = Date.now, interval = se
     if (stopped) return;
     const elapsed = matchElapsedSeconds(match, now());
     onTick(elapsed);
-    if (elapsed >= matchDurationSeconds(match)) stop();
+    if (elapsed >= matchActiveDurationSeconds(match)) stop();
   };
   if (!Number.isFinite(Date.parse(match?.started_at)) || !Number.isFinite(Date.parse(match?.ends_at))) {
     onTick(0);

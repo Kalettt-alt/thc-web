@@ -54,7 +54,7 @@ export function chooseChaser(players, point, isUser, previousId) {
   }, null)?.id || null;
 }
 
-export function buildTacticalTargets(players, ball, owner, previousChasers = {}, mentality = 'NORMAL', elapsedMs = 0) {
+export function buildTacticalTargets(players, ball, owner, previousChasers = {}, mentality = 'NORMAL', elapsedMs = 0, { counter = false } = {}) {
   const predictedBall = clampPitchPoint({ x: ball.x + (ball.vx || 0) * 0.13, y: ball.y + (ball.vy || 0) * 0.13 });
   const chasers = {
     user: !owner || !owner.isUser ? chooseChaser(players, predictedBall, true, previousChasers.user) : null,
@@ -89,6 +89,7 @@ export function buildTacticalTargets(players, ball, owner, previousChasers = {},
     }
     const inPossession = owner && owner.isUser === player.isUser;
     const approach = player.isUser ? mentality : 'NORMAL';
+    const centerBlocked = inPossession && players.filter(opponent => opponent.isUser !== owner.isUser && !opponent.isGK && (opponent.y - owner.y) * direction > 100 && (opponent.y - owner.y) * direction < 1900 && Math.abs(opponent.x - PITCH_W / 2) < 1100).length >= 2;
     let y = player.baseY + (ball.y - PITCH_H / 2) * (player.role === 'DEF' ? 0.2 : 0.38);
     let x = player.baseX + (ball.x - PITCH_W / 2) * 0.12;
     if (inPossession) {
@@ -96,8 +97,17 @@ export function buildTacticalTargets(players, ball, owner, previousChasers = {},
       if (player.role === 'MID') {
         const overlaps = player.slot !== 'mcd' && player.id !== owner.id && (player.baseX < PITCH_W / 2) !== (owner.x < PITCH_W / 2);
         y = owner.y + direction * (overlaps && approach !== 'DEFENSIVA' ? 300 : -(player.slot === 'mcd' ? 950 : approach === 'DEFENSIVA' ? 800 : 480));
+        if (centerBlocked) {
+          const pivot = player.slot === 'mcd' || Math.abs(player.baseX - PITCH_W / 2) < 700;
+          y = owner.y - direction * (pivot ? 1050 : 420);
+          x = pivot ? PITCH_W / 2 + (owner.x < PITCH_W / 2 ? 500 : -500) : player.baseX + (player.baseX < PITCH_W / 2 ? -550 : 550);
+        } else if (counter && approach !== 'DEFENSIVA' && player.slot !== 'mcd') y = owner.y + direction * (overlaps ? 1000 : 350);
       }
       if (player.role === 'DEF') y = player.isUser ? Math.max(y, owner.y + (approach === 'DEFENSIVA' ? 1650 : 1250)) : Math.min(y, owner.y - 1250);
+      if (player.role === 'DEF' && approach !== 'DEFENSIVA' && (counter || centerBlocked) && Math.abs(player.baseX - PITCH_W / 2) > 1500 && Math.abs(owner.y - goal) > 2500) {
+        x = player.baseX + (player.baseX < PITCH_W / 2 ? -200 : 200);
+        y = owner.y + direction * (counter ? 650 : 200);
+      }
       if (Math.abs(x - owner.x) < 350 && player.role !== 'DEF') x += player.baseX < PITCH_W / 2 ? -430 : 430;
       if (owner.isGK) {
         if (player.role === 'DEF') y = ownGoal + direction * (850 + Math.abs(player.baseX - PITCH_W / 2) * 0.14);
@@ -113,7 +123,10 @@ export function buildTacticalTargets(players, ball, owner, previousChasers = {},
       }
     } else if (owner) {
       if (player.role === 'DEF') y = player.isUser ? Math.max(player.baseY - 1800, owner.y + 650) : Math.min(player.baseY + 1800, owner.y - 650);
-      if (player.role === 'MID') y = owner.y + direction * 380;
+      if (player.role === 'MID') {
+        y = owner.y + direction * 380;
+        x = player.baseX * 0.45 + PITCH_W / 2 * 0.35 + owner.x * 0.2;
+      }
       if (player.role === 'ATT') y = player.baseY + (owner.y - PITCH_H / 2) * 0.15;
     }
     if (player.role === 'ATT') y = player.isUser ? Math.max(goal + 420, y) : Math.min(goal - 420, y);
@@ -150,7 +163,7 @@ export function maintainSpacing(players, ownerId) {
   for (const player of players) Object.assign(player, clampPitchPoint(player, 70));
 }
 
-export function choosePassTarget(players, owner, { style = 'BALANCED', returnToId, allowKeeper = false } = {}) {
+export function choosePassTarget(players, owner, { style = 'BALANCED', returnToId, allowKeeper = false, minProgress } = {}) {
   const opponents = players.filter(player => player.isUser !== owner.isUser);
   const direction = owner.isUser ? -1 : 1;
   return players.filter(player => player.isUser === owner.isUser && player.id !== owner.id && (!player.isGK || allowKeeper)).map(player => {
@@ -159,7 +172,30 @@ export function choosePassTarget(players, owner, { style = 'BALANCED', returnToI
     const progress = (player.y - owner.y) * direction;
     const lateralChange = Math.abs(player.x - owner.x);
     const marked = Math.min(...opponents.map(opponent => Math.hypot(opponent.x - player.x, opponent.y - player.y)), 1500);
-    const preference = style === 'RECYCLE' ? -progress * 0.45 - distance * 0.08 : style === 'SWITCH' ? lateralChange * 0.6 : style === 'WALL' && player.id === returnToId ? 1400 : style === 'FORWARD' || style === 'THROUGH' ? progress * 0.65 : style === 'LONG' ? progress * 0.9 + distance * 0.1 : style === 'CUTBACK' ? -progress * 0.35 + (player.role === 'MID' ? 420 : 0) : 0;
+    const width = Math.abs(player.x - PITCH_W / 2);
+    const preference = style === 'RECYCLE' ? -progress * 0.45 - distance * 0.08
+      : style === 'SWITCH' ? lateralChange * 0.7
+        : style === 'WALL' && player.id === returnToId ? 1400
+          : ['FORWARD', 'THROUGH', 'COUNTER'].includes(style) ? progress * (style === 'COUNTER' ? 1.1 : 0.7)
+            : style === 'LONG' ? progress * 0.9 + distance * 0.1
+              : style === 'CUTBACK' ? -progress * 0.35 + (player.role === 'MID' ? 420 : 0) - width * 0.5
+                : style === 'CROSS' ? -width * 0.75 + (player.role === 'ATT' ? 700 : 0)
+                  : style === 'WIDE' || style === 'OVERLAP' ? width * 0.5 + progress * (style === 'OVERLAP' ? 0.7 : 0.1)
+                    : style === 'DIAGONAL' ? progress * 0.5 + lateralChange * 0.4 : 0;
     return { player, score: clearance * (style === 'LONG' ? 0.25 : 0.65) + Math.min(marked, 800) * 0.25 + progress * 0.24 - distance * 0.17 + preference - (player.isGK ? 1200 : 0), distance, clearance, progress };
-  }).filter(candidate => candidate.distance > 280 && candidate.distance < (style === 'LONG' ? 5200 : 3000) && (style === 'LONG' ? candidate.progress > 1400 : candidate.clearance > 110)).sort((a, b) => b.score - a.score)[0]?.player || null;
+  }).filter(candidate => {
+    if (candidate.distance <= 280 || candidate.distance >= (style === 'LONG' ? 5200 : style === 'CROSS' || style === 'SWITCH' ? 4400 : 3000)) return false;
+    if (Number.isFinite(minProgress) && candidate.progress < minProgress) return false;
+    if (style === 'LONG') return candidate.progress > 1400;
+    if (candidate.clearance <= 110) return false;
+    if (['THROUGH', 'COUNTER', 'OVERLAP', 'DIAGONAL'].includes(style) && candidate.progress < 180) return false;
+    if (style === 'SWITCH' && (Math.abs(candidate.player.x - owner.x) < 1300 || candidate.progress < -900)) return false;
+    if (style === 'WIDE' && (Math.abs(candidate.player.x - PITCH_W / 2) < 1000 || candidate.progress < -900)) return false;
+    if (style === 'CROSS' || style === 'CUTBACK') {
+      const goalY = owner.isUser ? GOAL_Y_TOP : GOAL_Y_BOT;
+      if (Math.abs(candidate.player.y - goalY) > 1950 || Math.abs(candidate.player.x - PITCH_W / 2) > 1200) return false;
+      if (style === 'CUTBACK' && (candidate.progress > 350 || candidate.progress < -1250)) return false;
+    }
+    return true;
+  }).sort((a, b) => b.score - a.score)[0]?.player || null;
 }

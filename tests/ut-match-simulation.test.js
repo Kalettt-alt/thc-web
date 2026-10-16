@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { EQUIPOS_DATA } from '../src/pages/UltimateTeam/JugadoresUT.js';
-import { advanceOfflineMatch, applyOfflineCoaching, createOfflineMatch, matchClockState, matchElapsedSeconds, matchVisibleState, observeMatchClock, practiceTeamSnapshot, simulationPlayerMarkers, teamSimulationMetrics, UT_MATCH_DURATION } from '../src/pages/UltimateTeam/simulationUT.js';
+import { advanceOfflineMatch, applyOfflineCoaching, createOfflineMatch, matchClockState, matchElapsedSeconds, matchVisibleState, observeMatchClock, practiceTeamSnapshot, simulationPlayerMarkers, teamSimulationMetrics, matchActiveDurationSeconds, matchHalfSeconds, UT_MATCH_DURATION } from '../src/pages/UltimateTeam/simulationUT.js';
 import { effectivePlayerGrl, SQUAD_FORMATIONS, validateStartingSquad } from '../src/pages/UltimateTeam/squadUT.js';
 
 const makeTeam = (grl, stamina = 100) => ({ id: `team-${grl}-${stamina}`, nombre: 'Club de prueba', titulares: ['GK','LB','CB','CB','RB','CM','CAM','CM','LW','ST','RW'].map((pos, index) => ({ id: `card-${index}`, nombre: `Jugador ${index}`, pos, grl, stamina })) });
 
-test('la práctica dura exactamente 120 segundos, usa el once real y no modifica los datos recibidos', () => {
+test('la práctica usa120 segundos reglamentarios más el cierre de las jugadas, usa el once real y no modifica los datos recibidos', () => {
   const home = makeTeam(84);
   const rival = EQUIPOS_DATA.find(team => team.id === 'river');
   const before = JSON.stringify({ home, rival });
@@ -14,13 +14,13 @@ test('la práctica dura exactamente 120 segundos, usa el once real y no modifica
   const second = createOfflineMatch(home, rival, { seed: 'fixed', startedAt: 1000 });
   assert.deepEqual(first, second);
   assert.equal(first.duration_seconds, UT_MATCH_DURATION);
-  assert.equal(Date.parse(first.ends_at) - Date.parse(first.started_at), 132000);
+  assert.equal(Date.parse(first.ends_at) - Date.parse(first.started_at), (matchActiveDurationSeconds(first)+12)*1000);
   assert.equal(first.events[0].type, 'kickoff');
   assert.equal(first.events.length, 1);
-  const final = advanceOfflineMatch(first, 120);
-  assert.equal(final.events.find(event => event.type === 'halftime').second, 60);
+  const final = advanceOfflineMatch(first, 180);
+  assert.equal(final.events.find(event => event.type === 'halftime').second, matchHalfSeconds(first));
   assert.equal(final.events.at(-1).type, 'fulltime');
-  assert.equal(final.events.at(-1).second, 120);
+  assert.equal(final.events.at(-1).second, matchActiveDurationSeconds(first));
   assert.equal(JSON.stringify({ home, rival }), before);
   for (const event of final.events) {
     const names = [...home.titulares, ...rival.titulares].map(player => player.nombre || player.name);
@@ -34,13 +34,13 @@ test('GRL cercano tiene oportunidades comparables; resultados normales y límite
   let goalsHome = 0, goalsAway = 0, ordinary = 0;
   const types = new Set();
   for (let index = 0; index < 3000; index++) {
-    const match = advanceOfflineMatch(createOfflineMatch(home, away, { seed: `near-${index}`, startedAt: 0 }), 120);
+    const match = advanceOfflineMatch(createOfflineMatch(home, away, { seed: `near-${index}`, startedAt: 0 }), 180);
     goalsHome += match.home_goals;
     goalsAway += match.away_goals;
     if (match.home_goals <= 4 && match.away_goals <= 4) ordinary++;
     assert.ok(match.home_goals >= 0 && match.home_goals <= 6);
     assert.ok(match.away_goals >= 0 && match.away_goals <= 6);
-    const visible = matchVisibleState(match, 120);
+    const visible = matchVisibleState(match, 180);
     assert.equal(visible.stats.home.goals, match.home_goals);
     assert.equal(visible.stats.away.goals, match.away_goals);
     match.events.forEach(event => types.add(event.type));
@@ -53,13 +53,13 @@ test('GRL cercano tiene oportunidades comparables; resultados normales y límite
 test('una diferencia grande ayuda sin goleadas constantes y la stamina disminuye rendimiento', () => {
   let stronger = 0, weaker = 0, rare = 0, fresh = 0, tired = 0;
   for (let index = 0; index < 1500; index++) {
-    const gap = advanceOfflineMatch(createOfflineMatch(makeTeam(95), makeTeam(70), { seed: `gap-${index}`, startedAt: 0 }), 120);
+    const gap = advanceOfflineMatch(createOfflineMatch(makeTeam(95), makeTeam(70), { seed: `gap-${index}`, startedAt: 0 }), 180);
     stronger += gap.home_goals;
     weaker += gap.away_goals;
     if (gap.home_goals >= 5) rare++;
     assert.ok(gap.home_goals <= 6 && gap.away_goals <= 6);
-    fresh += advanceOfflineMatch(createOfflineMatch(makeTeam(85), makeTeam(85), { seed: `energy-${index}`, startedAt: 0 }), 120).home_goals;
-    tired += advanceOfflineMatch(createOfflineMatch(makeTeam(85, 30), makeTeam(85), { seed: `energy-${index}`, startedAt: 0 }), 120).home_goals;
+    fresh += advanceOfflineMatch(createOfflineMatch(makeTeam(85), makeTeam(85), { seed: `energy-${index}`, startedAt: 0 }), 180).home_goals;
+    tired += advanceOfflineMatch(createOfflineMatch(makeTeam(85, 30), makeTeam(85), { seed: `energy-${index}`, startedAt: 0 }), 180).home_goals;
   }
   assert.ok(stronger / 1500 > weaker / 1500 + 1);
   assert.ok(rare / 1500 < .09);
@@ -71,8 +71,8 @@ test('el reloj usa tiempo real, nunca muestra eventos futuros y no se adelanta p
   const match = createOfflineMatch(makeTeam(84), makeTeam(84), { seed: 'timeline', startedAt: 0 });
   assert.equal(matchElapsedSeconds(match, -1000), 0);
   assert.equal(matchElapsedSeconds(match, 90000), 78);
-  assert.equal(matchElapsedSeconds(match, 179000), 120);
-  assert.equal(matchElapsedSeconds(match, 200000), 120);
+  assert.equal(matchElapsedSeconds(match, 179000), matchActiveDurationSeconds(match));
+  assert.equal(matchElapsedSeconds(match, 200000), matchActiveDurationSeconds(match));
   const atStart = matchVisibleState(match, 0);
   assert.equal(atStart.stats.home.goals, 0);
   assert.equal(atStart.stats.away.goals, 0);
@@ -89,12 +89,12 @@ test('cada reloj tiene un único interval y se limpia al terminar, cancelar o de
   const stop = observeMatchClock(match, elapsed => ticks.push(elapsed), scheduler);
   assert.equal(timers.size, 1);
   assert.deepEqual(ticks, [0]);
-  now = 65000;
+  now = (matchHalfSeconds(match)+1)*1000;
   timers.values().next().value();
-  assert.equal(ticks.at(-1), 60);
-  now = 132000;
+  assert.equal(ticks.at(-1), matchHalfSeconds(match));
+  now = Date.parse(match.ends_at);
   timers.values().next().value();
-  assert.equal(ticks.at(-1), 120);
+  assert.equal(ticks.at(-1), matchActiveDurationSeconds(match));
   assert.equal(timers.size, 0);
   stop(); stop();
   assert.equal(cleared, 1);
@@ -156,21 +156,28 @@ test('ED como MD pierde mucho menos rendimiento que un arquero como extremo', ()
   assert.ok(adjacent - far >= 30);
 });
 
-test('el descanso congela minuto y fatiga durante12 segundos; dos mitades de60 segundos', () => {
-  const match = createOfflineMatch(makeTeam(84), makeTeam(85), { startedAt: 0 });
-  assert.deepEqual(matchClockState(match, -1).phase, 'pre');
-  assert.equal(matchClockState(match, 59999).phase, 'first');
-  assert.deepEqual(matchClockState(match, 60000), { elapsed: 60, wallElapsed: 60, phase: 'halftime', halftimeRemaining: 12 });
-  assert.equal(matchClockState(match, 71000).elapsed, 60);
-  assert.equal(matchClockState(match, 72000).phase, 'second');
-  assert.equal(matchClockState(match, 131000).elapsed, 119);
-  assert.equal(matchClockState(match, 132000).phase, 'finished');
-  const half = advanceOfflineMatch(match, 60);
-  assert.equal(advanceOfflineMatch(half, 60), half);
-  const continuous = advanceOfflineMatch(match, 120);
-  let chunked = match;
-  for (let second = 1; second <= 120; second++) chunked = advanceOfflineMatch(chunked, second);
-  assert.deepEqual(chunked, continuous);
+test('el descanso espera cerrar la llegada, congela fatiga12s y el reloj conserva el añadido', () => {
+  const match=createOfflineMatch(makeTeam(84),makeTeam(85),{startedAt:0});
+  const half=matchHalfSeconds(match),end=matchActiveDurationSeconds(match);
+  assert.ok(half>=64&&half<=68);
+  assert.equal(matchClockState(match,-1).phase,'pre');
+  assert.equal(matchClockState(match,60000).phase,'first');
+  assert.equal(matchClockState(match,half*1000-1).phase,'first');
+  assert.deepEqual(matchClockState(match,half*1000),{elapsed:half,wallElapsed:half,phase:'halftime',halftimeRemaining:12});
+  assert.equal(matchClockState(match,(half+11)*1000).elapsed,half);
+  assert.equal(matchClockState(match,(half+12)*1000).phase,'second');
+  assert.equal(matchClockState(match,(end+11)*1000).elapsed,end-1);
+  assert.equal(matchClockState(match,(end+12)*1000).phase,'finished');
+  const paused=advanceOfflineMatch(match,half);
+  assert.equal(advanceOfflineMatch(paused,half),paused);
+  assert.equal(paused.events.at(-2).safe_end,true);
+  const continuous=advanceOfflineMatch(match,end);
+  let chunked=match;
+  for(let second=1;second<=end;second++)chunked=advanceOfflineMatch(chunked,second);
+  assert.deepEqual(chunked,continuous);
+  assert.equal(continuous.events.at(-2).safe_end,true);
+  assert.match(matchVisibleState(match,61).minuteLabel,/^45\+/);
+  assert.match(matchVisibleState(match,half+61).minuteLabel,/^90\+/);
 });
 
 test('coaching afecta solo el futuro, respeta roster, cinco cambios y penalización sin duplicarla', () => {
@@ -193,10 +200,10 @@ test('coaching afecta solo el futuro, respeta roster, cinco cambios y penalizaci
   assert.throws(() => applyOfflineCoaching(coached, { titulares: reentry, formacion: '4-3-3' }, 60), /disponible/);
   const tooMany = ids.map((id, index) => index < 5 ? `bench-${index + 1}` : id);
   assert.throws(() => applyOfflineCoaching(coached, { titulares: tooMany, formacion: '4-3-3' }, 60), /cinco/);
-  const final = advanceOfflineMatch(coached, 120);
+  const final = advanceOfflineMatch(coached, 180);
   assert.deepEqual(final.events.slice(0, at60.events.length), at60.events);
   assert.ok(final.home.roster.find(player => player.id === 'first-3').played_seconds === 60);
-  assert.ok(final.home.roster.find(player => player.id === 'bench-0').played_seconds === 60);
+  assert.ok(final.home.roster.find(player => player.id === 'bench-0').played_seconds === matchActiveDurationSeconds(initial)-60);
   assert.ok(final.home.roster.find(player => player.id === 'bench-1').played_seconds === 0);
   assert.equal(JSON.stringify(team).includes('played_seconds'), false);
 });
@@ -207,17 +214,20 @@ test('la mentalidad cambia ocasiones futuras con las mismas semillas y no un mar
   for (let index = 0; index < 300; index++) {
     const match = createOfflineMatch(team, makeTeam(84), { seed: `tactic-${index}`, startedAt: 0 });
     const args = { titulares: match.home.titulares.map(player => player.id), formacion: '4-3-3' };
-    aggressive += advanceOfflineMatch(applyOfflineCoaching(match, { ...args, mentalidad: 'ofensiva' }, 0), 120).home_goals;
-    defensive += advanceOfflineMatch(applyOfflineCoaching(match, { ...args, mentalidad: 'defensiva' }, 0), 120).home_goals;
+    aggressive += advanceOfflineMatch(applyOfflineCoaching(match, { ...args, mentalidad: 'ofensiva' }, 0), 180).home_goals;
+    defensive += advanceOfflineMatch(applyOfflineCoaching(match, { ...args, mentalidad: 'defensiva' }, 0), 180).home_goals;
   }
   assert.ok(aggressive > defensive);
 });
 
 
-test('los partidos antiguos conservan sus relojes y la práctica nueva usa versión3', () => {
+test('los partidos antiguos conservan sus relojes y la práctica nueva usa versión4', () => {
   const modern = createOfflineMatch(makeTeam(84), makeTeam(85), {startedAt:0});
-  assert.equal(modern.simulation_version, 3);
-  const v2 = {...modern, simulation_version:2, duration_seconds:180};
+  assert.equal(modern.simulation_version, 4);
+  const v3 = {...modern,simulation_version:3,duration_seconds:120,ends_at:new Date(132000).toISOString()};
+  assert.equal(matchClockState(v3,60000).phase,'halftime');
+  assert.equal(matchClockState(v3,132000).phase,'finished');
+  const v2 = {...modern, simulation_version:2, duration_seconds:180,ends_at:new Date(192000).toISOString()};
   const v1 = {...modern, simulation_version:1, duration_seconds:180};
   assert.equal(matchClockState(v2,90000).phase,'halftime');
   assert.equal(matchClockState(v2,191000).elapsed,179);

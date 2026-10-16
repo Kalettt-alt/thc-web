@@ -4,6 +4,6 @@ export function matchPublicationKey(state) {
 
 export function shouldPublishMatchState(state, previousKey, previousTime, time) {
   if (matchPublicationKey(state) !== previousKey) return true;
-  const active = !state.isPaused && !state.finished && ['SIMULATING', 'KICKOFF_SETUP', 'GOAL_KICK', 'WAITING_USER_INPUT', 'USER_DRIVING', 'BALL_FLIGHT'].includes(state.phase);
+  const active = !state.isPaused && !state.finished && ['SIMULATING', 'KICKOFF_SETUP', 'GOAL_KICK', 'OUT', 'TURNOVER_PRESS', 'WAITING_USER_INPUT', 'USER_DRIVING', 'BALL_FLIGHT'].includes(state.phase);
   return active && time - previousTime >= 1000 / 30;
 }

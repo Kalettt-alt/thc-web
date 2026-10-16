@@ -1,4 +1,4 @@
-export async function saveFantasySnapshot(client, snapshot, userId, shouldSave = () => true, timeoutMs = 15000) {
+export async function saveFantasySnapshot(client, snapshot, userId, shouldSave = () => true, timeoutMs = 15000, onSaved = () => {}) {
   const request = async operation => {
     let timer;
     const controller = new AbortController();
@@ -17,19 +17,21 @@ export async function saveFantasySnapshot(client, snapshot, userId, shouldSave =
     }));
     if (!error) {
       if (!data?.id) throw new Error('El servidor no confirmó el guardado.');
+      onSaved(data);
       return true;
     }
     if (error.code !== 'PGRST202' && error.code !== '42883') {
-      if (error.code === '40001') throw new Error('La energía cambió en otra pestaña. Recarga para recuperar la carrera actual.');
+      if (error.code === '40001') throw new Error('La energía cambió o la carrera avanzó en otra pestaña. Recarga para recuperar la carrera actual.');
       throw error;
     }
     if (!shouldSave()) return false;
   }
-  const legacySnapshot = Object.fromEntries(Object.entries(snapshot).filter(([key]) => key !== 'energia_revision'));
+  const legacySnapshot = Object.fromEntries(Object.entries(snapshot).filter(([key]) => !['energia_revision', 'partida_id'].includes(key)));
   const { data, error } = await request(client.from('fantasy_partidas').upsert({
     ...legacySnapshot, user_id: userId, actualizado_en: new Date().toISOString()
   }, { onConflict: 'user_id' }).select('id').single());
   if (error) throw error;
   if (!data) throw new Error('El servidor no confirmó el guardado.');
+  onSaved(data);
   return true;
 }

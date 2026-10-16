@@ -16,7 +16,6 @@ export default function MatchResultCard({ miClub, rival, score = [0, 0], summary
   const best = [...ownStats].sort((a, b) => ratingFor(b) - ratingFor(a))[0];
   const won = score[0] > score[1];
   const draw = score[0] === score[1];
-  const opportunity = summary?.opportunities;
   const events = (summary?.highlights || summary?.events || []).filter(event => event.type === 'GOAL').slice(-4);
   const rows = [
     { label: 'Tiros', key: 'shots' },
@@ -29,7 +28,7 @@ export default function MatchResultCard({ miClub, rival, score = [0, 0], summary
     <div className="df-result-headline"><div><p>EL PARTIDO, EN UNA MIRADA</p><h2 id="df-result-title">{won ? 'VICTORIA' : draw ? 'EMPATE' : 'A SEGUIR'}<span>.</span></h2></div><span className="df-result-stamp">{won ? <Trophy size={36} /> : <Target size={36} />}</span></div>
     <div className="df-result-score"><div><Badge club={miClub} getImg={getImg} /><b>{miClub.name}</b><small>Tu equipo</small></div><strong aria-label={`${miClub.name} ${score[0]}, ${rival.name} ${score[1]}`}>{score[0]}<i>–</i>{score[1]}</strong><div><Badge club={rival} getImg={getImg} /><b>{rival.name}</b><small>Rival</small></div></div>
     {(best || allStats.length > 0) && <div className="df-result-details">
-      <div className="df-result-statistics"><h3>El juego</h3>{rows.map(row => <div key={row.key}><b>{sumStat(ownStats, row.key)}</b><span>{row.label}</span><b>{sumStat(rivalStats, row.key)}</b></div>)}{opportunity?.user && opportunity?.rival && <div><b>{opportunity.user.used}/{opportunity.user.limit}</b><span>Ocasiones</span><b>{opportunity.rival.used}/{opportunity.rival.limit}</b></div>}</div>
+      <div className="df-result-statistics"><h3>El juego</h3>{rows.map(row => <div key={row.key}><b>{sumStat(ownStats, row.key)}</b><span>{row.label}</span><b>{sumStat(rivalStats, row.key)}</b></div>)}</div>
       {best && <aside className="df-result-player"><span><Medal size={18} />DESTACADO DE TU EQUIPO</span><b>{best.name}</b><div><strong>{ratingFor(best).toFixed(1)}</strong><span>nota del partido</span></div><p>{best.goals || 0} goles <i>·</i> {best.passesCompleted || 0} pases <i>·</i> {best.recoveries || 0} recuperaciones</p></aside>}
     </div>}
     {events.length > 0 && <div className="df-result-highlights" aria-label="Goles del encuentro">{events.map((event, index) => <span key={event.id || index}><b>{event.clock}′</b>{event.playerName || (event.scoringTeam === 'USER' ? miClub.name : rival.name)}</span>)}</div>}
